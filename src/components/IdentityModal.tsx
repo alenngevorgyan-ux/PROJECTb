@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { useWorld } from '../context/WorldContext';
+import { SimulatedActionBadge } from './DemoModeBadge';
 import {
   Wallet,
   ShieldCheck,
@@ -41,12 +42,10 @@ export const IdentityModal: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-bold text-white">Identity & Governance Wallet</span>
-                <span className="text-[10px] font-mono text-sky-400 bg-sky-950 px-2 py-0.5 rounded border border-sky-800/60">
-                  VERIFIED ATTESTATION
-                </span>
+                <SimulatedActionBadge type="CUSTOMER_SYSTEM" />
               </div>
               <div className="text-xs text-slate-400">
-                Personal credentials, enterprise roles, and delegated agent permissions
+                Personal credentials, enterprise roles, and delegated agent permissions (Demo Mode)
               </div>
             </div>
           </div>
@@ -71,7 +70,7 @@ export const IdentityModal: React.FC = () => {
               <div className="text-xs text-slate-400 font-mono mt-0.5">{identity.personalEmail}</div>
               <div className="mt-2 text-[10px] text-emerald-400 flex items-center gap-1 font-mono">
                 <ShieldCheck className="w-3.5 h-3.5" />
-                <span>WebAuthn Biometric Keyring #8842</span>
+                <span>Demo Role Keyring #8842 (Simulation)</span>
               </div>
             </div>
 
@@ -157,7 +156,7 @@ export const IdentityModal: React.FC = () => {
         <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
           <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1.5">
             <Lock className="w-3.5 h-3.5 text-sky-400" />
-            <span>Zero-Knowledge Proof Attested Session</span>
+            <span>Simulated Identity Session (Demo Mode)</span>
           </div>
 
           <button

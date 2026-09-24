@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { useWorld } from '../context/WorldContext';
+import { SimulatedActionBadge } from './DemoModeBadge';
 import { Mail, ArrowDown, Send, CheckCircle2, AlertTriangle, ShieldCheck, X } from 'lucide-react';
 
 export const EmailThreadModal: React.FC = () => {
@@ -37,9 +38,7 @@ export const EmailThreadModal: React.FC = () => {
                 <span className="text-sm font-bold text-white">
                   Email Rail: Acme Manufacturing
                 </span>
-                <span className="text-[10px] font-mono text-amber-400 bg-amber-950 px-2 py-0.5 rounded border border-amber-800/60">
-                  UNCLAIMED / ASYNC RAIL
-                </span>
+                <SimulatedActionBadge type="EMAIL" />
               </div>
               <div className="text-xs text-slate-400">
                 Subject: Re: Inquiry: Chassis Shipment #511 Customs Hold & PO Delivery
@@ -115,7 +114,7 @@ export const EmailThreadModal: React.FC = () => {
         {/* Footer Actions */}
         <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
           <div className="text-[11px] text-slate-400 font-mono">
-            Async SMTP verified via RFC-822 signature
+            Simulated asynchronous supplier communication (Email Rail Demo)
           </div>
 
           <div className="flex items-center gap-2">

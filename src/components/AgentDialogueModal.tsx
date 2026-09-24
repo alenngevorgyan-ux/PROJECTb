@@ -5,7 +5,8 @@
 
 import React, { useState } from 'react';
 import { useWorld } from '../context/WorldContext';
-import { Bot, User, Send, CheckCircle2, AlertTriangle, ArrowRight, X } from 'lucide-react';
+import { SimulatedActionBadge } from './DemoModeBadge';
+import { Bot, User, Send, CheckCircle2, AlertTriangle, ArrowRight, X, Sparkles } from 'lucide-react';
 
 export const AgentDialogueModal: React.FC = () => {
   const { activeDialogue, setActiveDialogue, handleDialogueOption } = useWorld();
@@ -18,7 +19,7 @@ export const AgentDialogueModal: React.FC = () => {
     if (!customInput.trim()) return;
 
     const lower = customInput.toLowerCase();
-    // Intelligent matching against core workflows
+    // Pattern matching against core demo scenarios
     if (activeDialogue.characterId === 'vitek') {
       if (lower.includes('onboarding') || lower.includes('fix') || lower.includes('bug')) {
         handleDialogueOption('VITEK_REQ_ONBOARDING');
@@ -55,6 +56,24 @@ export const AgentDialogueModal: React.FC = () => {
     setCustomInput('');
   };
 
+  // Helper suggested demo directives
+  const getSuggestedChips = () => {
+    switch (activeDialogue.characterId) {
+      case 'vitek':
+        return ['Fix onboarding bug', 'View PR #184'];
+      case 'maya':
+        return ['Ask Acme about shipment #511', 'Accept $400 credit'];
+      case 'cloudworks-agent':
+        return ['Fix Pro subscription', 'Allow demo access'];
+      case 'nova':
+        return ['Work with Alex on onboarding', 'Review Design V2'];
+      default:
+        return [];
+    }
+  };
+
+  const chips = getSuggestedChips();
+
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="w-full max-w-lg bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl overflow-hidden flex flex-col">
@@ -70,9 +89,7 @@ export const AgentDialogueModal: React.FC = () => {
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="text-sm font-semibold text-white">{activeDialogue.speaker}</span>
-                <span className="text-[10px] font-mono text-sky-400 bg-sky-950 px-1.5 py-0.5 rounded border border-sky-800/40">
-                  AI AGENT
-                </span>
+                <SimulatedActionBadge type="WORKFLOW" />
               </div>
               <div className="text-xs text-slate-400">{activeDialogue.speakerRole}</div>
             </div>
@@ -96,7 +113,7 @@ export const AgentDialogueModal: React.FC = () => {
           {activeDialogue.options && activeDialogue.options.length > 0 && (
             <div className="space-y-2 pt-1">
               <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                Suggested Actions:
+                Interactive Directives:
               </div>
               <div className="flex flex-col gap-1.5">
                 {activeDialogue.options.map((opt, idx) => (
@@ -122,23 +139,46 @@ export const AgentDialogueModal: React.FC = () => {
           )}
         </div>
 
-        {/* Input Bar for natural instruction */}
-        <form onSubmit={handleCustomSubmit} className="p-3 bg-slate-950 border-t border-slate-800 flex items-center gap-2">
-          <input
-            type="text"
-            value={customInput}
-            onChange={(e) => setCustomInput(e.target.value)}
-            placeholder={`Type a directive for ${activeDialogue.speaker}...`}
-            className="flex-1 bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 px-3 py-2 rounded-lg focus:outline-none focus:border-sky-500"
-          />
-          <button
-            type="submit"
-            className="p-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs transition-colors shrink-0"
-            title="Send directive"
-          >
-            <Send className="w-3.5 h-3.5" />
-          </button>
-        </form>
+        {/* Honest Input Area */}
+        <div className="p-3 bg-slate-950 border-t border-slate-800 space-y-2">
+          {/* Quick chips */}
+          {chips.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto text-[10px] pb-1">
+              <span className="text-slate-500 shrink-0">Demo directives:</span>
+              {chips.map((chip, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setCustomInput(chip)}
+                  className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-mono whitespace-nowrap transition-colors border border-slate-700/50"
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <form onSubmit={handleCustomSubmit} className="flex items-center gap-2">
+            <input
+              type="text"
+              value={customInput}
+              onChange={(e) => setCustomInput(e.target.value)}
+              placeholder={`Try a demo instruction (e.g. ${chips[0] || 'fix onboarding'})...`}
+              className="flex-1 bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 px-3 py-2 rounded-lg focus:outline-none focus:border-sky-500"
+            />
+            <button
+              type="submit"
+              className="p-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs transition-colors shrink-0"
+              title="Send demo instruction"
+            >
+              <Send className="w-3.5 h-3.5" />
+            </button>
+          </form>
+
+          <div className="text-[10px] text-slate-500 text-center font-mono">
+            Demo instruction · Pattern-matched simulation directives (not unrestricted AI)
+          </div>
+        </div>
       </div>
     </div>
   );

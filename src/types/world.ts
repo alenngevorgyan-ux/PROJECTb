@@ -37,9 +37,47 @@ export interface Character {
   currentWorkflow?: AgentWorkflow;
 }
 
+export type WorkflowType =
+  | 'VITEK_ONBOARDING_FIX'
+  | 'MAYA_ACME_SHIPMENT'
+  | 'NOVA_DESIGN_COLLAB'
+  | 'CLOUDWORKS_SUPPORT';
+
+export type WorkflowExecutionStatus = 'IDLE' | 'RUNNING' | 'WAITING_INPUT' | 'COMPLETED';
+
+export interface ActiveWorkflowInfo {
+  runId: string;
+  type: WorkflowType;
+  status: WorkflowExecutionStatus;
+  currentStep: number;
+  totalSteps: number;
+  stepLabel: string;
+  startedAt: number;
+}
+
+export interface PaymentApprovalResult {
+  success: boolean;
+  reason?: 'ALREADY_PAID' | 'INVOICE_NOT_FOUND' | 'TREASURY_INSUFFICIENT';
+  balance: number;
+  invoiceId: string;
+}
+
+export interface MergePRResult {
+  success: boolean;
+  reason?: 'ALREADY_MERGED' | 'PR_NOT_FOUND';
+  prId: string;
+}
+
+export interface WorkflowStartResult {
+  started: boolean;
+  reason?: 'ALREADY_RUNNING';
+  runId?: string;
+  type: WorkflowType;
+}
+
 export interface AgentWorkflow {
   id: string;
-  type: 'VITEK_ONBOARDING_FIX' | 'MAYA_ACME_SHIPMENT' | 'NOVA_DESIGN_COLLAB' | 'CLOUDWORKS_SUPPORT';
+  type: WorkflowType;
   step: number;
   totalSteps: number;
   stepLabel: string;

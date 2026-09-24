@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { useWorld } from '../context/WorldContext';
+import { SimulatedActionBadge } from './DemoModeBadge';
 import { GitPullRequest, CheckCircle2, GitCommit, GitBranch, ArrowRight, X } from 'lucide-react';
 
 export const PullRequestModal: React.FC = () => {
@@ -34,6 +35,7 @@ export const PullRequestModal: React.FC = () => {
                 <span className="text-sm font-bold text-white">
                   PR #{pr.number}: {pr.title}
                 </span>
+                <SimulatedActionBadge type="GITHUB" />
                 <span
                   className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded ${
                     pr.status === 'MERGED'
@@ -41,7 +43,7 @@ export const PullRequestModal: React.FC = () => {
                       : 'bg-emerald-950 text-emerald-300 border border-emerald-800/60'
                   }`}
                 >
-                  {pr.status === 'MERGED' ? 'MERGED' : 'CHECKS PASSING (42/42)'}
+                  {pr.status === 'MERGED' ? 'MERGED' : 'CHECKS PASSING (42/42 SIMULATED)'}
                 </span>
               </div>
               <div className="text-xs text-slate-400 mt-1 flex items-center gap-2 font-mono">
@@ -68,7 +70,7 @@ export const PullRequestModal: React.FC = () => {
             <div className="font-semibold text-slate-200">Investigation Summary</div>
             <p className="text-slate-300 leading-relaxed">{pr.summary}</p>
             <div className="text-[11px] font-mono text-emerald-400 pt-1">
-              ✓ Automated CI: {pr.testsPassed} of {pr.testsCount} tests passed (100% test coverage)
+              ✓ Simulated CI: {pr.testsPassed} of {pr.testsCount} tests passed (100% test coverage)
             </div>
           </div>
 
@@ -101,7 +103,7 @@ export const PullRequestModal: React.FC = () => {
         {/* Footer Actions */}
         <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
           <div className="text-[11px] text-slate-400">
-            Simulated Git / CI rail synced with Engineering bay
+            Simulated GitHub / CI workflow synced with Engineering bay
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -118,12 +120,12 @@ export const PullRequestModal: React.FC = () => {
                 }}
                 className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-sm"
               >
-                <span>Merge Pull Request</span>
+                <span>Simulate PR Merge</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             ) : (
               <div className="px-3 py-1.5 bg-purple-950 text-purple-300 rounded text-xs font-semibold">
-                ✓ Merged to Main
+                ✓ Merged in Demo Repository
               </div>
             )}
           </div>

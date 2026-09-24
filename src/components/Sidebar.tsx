@@ -342,7 +342,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                Signup state drop resolution assigned to Vitek. 42/42 tests passing.
+                Signup state drop resolution assigned to Vitek. 42/42 simulated tests passing.
               </p>
               <div className="flex items-center justify-between pt-1">
                 <span className="text-[10px] text-sky-400 font-mono">PR #184</span>
@@ -374,7 +374,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 name: 'Acme Manufacturing',
                 rel: 'EXTERNAL SUPPLIER',
                 desc: 'Unclaimed business entity. Handled via automated Email Rail & EDI.',
-                rail: 'EMAIL / SMTP',
+                rail: 'EMAIL RAIL (SIMULATED)',
               },
               {
                 name: 'CloudWorks',
@@ -483,7 +483,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 ${treasuryBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </div>
               <div className="text-[10px] text-slate-400">
-                Keyring: #8842 · Auto-sweep enabled
+                Demo Keyring: #8842 · Simulation active
               </div>
             </div>
 

@@ -14,7 +14,10 @@ import {
   TaskItem,
   IdentityProfile,
   ViewLocation,
-  AgentWorkflow,
+  WorkflowType,
+  ActiveWorkflowInfo,
+  PaymentApprovalResult,
+  MergePRResult,
 } from '../types/world';
 import {
   INITIAL_CHARACTERS,
@@ -30,6 +33,7 @@ import {
   INITIAL_REALITY_EVENTS,
 } from '../data/initialData';
 import { soundFX } from '../audio/soundFx';
+import { createInitialDemoState, createSimulatedRealityEvent } from '../domain/demoEngine';
 
 interface ActiveDialogue {
   characterId: string;
@@ -65,7 +69,7 @@ interface WorldContextType {
   setCameraTarget: (coords: { x: number; y: number } | null) => void;
   activeDialogue: ActiveDialogue | null;
   setActiveDialogue: (dialogue: ActiveDialogue | null) => void;
-  
+
   // Active modals
   showPRModal: boolean;
   setShowPRModal: (show: boolean) => void;
@@ -82,6 +86,10 @@ interface WorldContextType {
   showFirstRunBanner: boolean;
   setShowFirstRunBanner: (show: boolean) => void;
 
+  // Workflow tracking
+  activeWorkflows: Record<WorkflowType, ActiveWorkflowInfo | undefined>;
+  isWorkflowRunning: (type: WorkflowType) => boolean;
+
   // Actions
   callVitek: () => void;
   interactWithCharacter: (charId: string) => void;
@@ -89,9 +97,10 @@ interface WorldContextType {
   teleportToOrganization: (orgId: string) => void;
   teleportToRoom: (roomId: string) => void;
   movePlayerTo: (x: number, y: number) => void;
-  approvePayment: (invoiceId: string) => void;
-  mergePullRequest: (prId: string) => void;
+  approvePayment: (invoiceId: string) => PaymentApprovalResult;
+  mergePullRequest: (prId: string) => MergePRResult;
   addRealityEvent: (event: Omit<RealityEvent, 'id' | 'timestamp'>) => void;
+  resetDemo: () => void;
 }
 
 const WorldContext = createContext<WorldContextType | null>(null);
@@ -121,6 +130,45 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [showCommandPalette, setShowCommandPalette] = useState<boolean>(false);
   const [showFirstRunBanner, setShowFirstRunBanner] = useState<boolean>(true);
 
+  // Workflows tracking state
+  const [activeWorkflows, setActiveWorkflows] = useState<Record<WorkflowType, ActiveWorkflowInfo | undefined>>({
+    VITEK_ONBOARDING_FIX: undefined,
+    MAYA_ACME_SHIPMENT: undefined,
+    NOVA_DESIGN_COLLAB: undefined,
+    CLOUDWORKS_SUPPORT: undefined,
+  });
+
+  // Track active timers and animation intervals for clean cancellations
+  const timersRef = useRef<Set<any>>(new Set());
+  const agentAnimationIntervalsRef = useRef<Record<string, any>>({});
+
+  const safeSetTimeout = useCallback((fn: () => void, ms: number) => {
+    const timer = setTimeout(() => {
+      timersRef.current.delete(timer);
+      fn();
+    }, ms);
+    timersRef.current.add(timer);
+    return timer;
+  }, []);
+
+  const clearAllTimers = useCallback(() => {
+    timersRef.current.forEach((t) => {
+      clearTimeout(t);
+      clearInterval(t);
+    });
+    timersRef.current.clear();
+
+    Object.values(agentAnimationIntervalsRef.current).forEach((interval) => {
+      clearInterval(interval);
+    });
+    agentAnimationIntervalsRef.current = {};
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => clearAllTimers();
+  }, [clearAllTimers]);
+
   // Sound sync
   useEffect(() => {
     soundFX.enabled = isSoundEnabled;
@@ -140,15 +188,17 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Helper to add events
   const addRealityEvent = useCallback((event: Omit<RealityEvent, 'id' | 'timestamp'>) => {
-    const now = new Date();
-    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const newEvt: RealityEvent = {
-      ...event,
-      id: `evt-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      timestamp: timeStr,
-    };
+    const newEvt = createSimulatedRealityEvent(event);
     setRealityEvents((prev) => [newEvt, ...prev.slice(0, 40)]);
   }, []);
+
+  // Check if workflow is already running
+  const isWorkflowRunning = useCallback(
+    (type: WorkflowType) => {
+      return activeWorkflows[type]?.status === 'RUNNING';
+    },
+    [activeWorkflows]
+  );
 
   // Rooms for current view
   const currentRooms = React.useMemo(() => {
@@ -220,28 +270,16 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setSelectedOrganization(org);
     }
     if (orgId === 'my-company') {
-      setCurrentLocation('MY_COMPANY');
-      setCharacters((prev) =>
-        prev.map((c) => (c.id === 'founder' ? { ...c, x: 3, y: 3, currentRoomId: 'founder-office' } : c))
-      );
+      handleSetCurrentLocation('MY_COMPANY');
     } else if (orgId === 'northstar-design') {
-      setCurrentLocation('NORTHSTAR');
-      setCharacters((prev) =>
-        prev.map((c) => (c.id === 'founder' ? { ...c, x: 3, y: 5, currentRoomId: 'northstar-reception' } : c))
-      );
+      handleSetCurrentLocation('NORTHSTAR');
     } else if (orgId === 'acme-manufacturing') {
-      setCurrentLocation('ACME');
-      setCharacters((prev) =>
-        prev.map((c) => (c.id === 'founder' ? { ...c, x: 3, y: 5, currentRoomId: 'acme-gatehouse' } : c))
-      );
+      handleSetCurrentLocation('ACME');
     } else if (orgId === 'cloudworks') {
-      setCurrentLocation('CLOUDWORKS');
-      setCharacters((prev) =>
-        prev.map((c) => (c.id === 'founder' ? { ...c, x: 3, y: 5, currentRoomId: 'cloudworks-support' } : c))
-      );
+      handleSetCurrentLocation('CLOUDWORKS');
     } else {
       // Return to City and position outside building
-      setCurrentLocation('CITY');
+      handleSetCurrentLocation('CITY');
       if (org) {
         setCharacters((prev) =>
           prev.map((c) =>
@@ -257,7 +295,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         );
       }
     }
-  }, [organizations]);
+  }, [organizations, handleSetCurrentLocation]);
 
   const teleportToRoom = useCallback((roomId: string) => {
     soundFX.playFootstep();
@@ -303,13 +341,21 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
   }, []);
 
-  // Character Agent Walk loop helper
+  // Character Agent Walk loop helper with duplicate protection
   const animateAgentWalk = useCallback(
     (charId: string, waypoints: { x: number; y: number }[], onComplete?: () => void) => {
+      // Clear previous interval if this agent is already walking
+      if (agentAnimationIntervalsRef.current[charId]) {
+        clearInterval(agentAnimationIntervalsRef.current[charId]);
+        delete agentAnimationIntervalsRef.current[charId];
+      }
+
       let stepIndex = 0;
       const interval = setInterval(() => {
         if (stepIndex >= waypoints.length) {
           clearInterval(interval);
+          delete agentAnimationIntervalsRef.current[charId];
+          timersRef.current.delete(interval);
           setCharacters((prev) =>
             prev.map((c) => (c.id === charId ? { ...c, isMoving: false } : c))
           );
@@ -339,12 +385,111 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         );
         stepIndex++;
       }, 160);
+
+      agentAnimationIntervalsRef.current[charId] = interval;
+      timersRef.current.add(interval);
     },
     []
   );
 
   // -------------------------------------------------------------
-  // DEMO 1: VITEK CALL FLOW
+  // CANONICAL IDEMPOTENT PR MERGE
+  // -------------------------------------------------------------
+  const mergePullRequest = useCallback(
+    (prId: string): MergePRResult => {
+      const pr = pullRequests.find((p) => p.id === prId);
+      if (!pr) {
+        return { success: false, reason: 'PR_NOT_FOUND', prId };
+      }
+      if (pr.status === 'MERGED') {
+        // Idempotent: already merged, do nothing
+        return { success: false, reason: 'ALREADY_MERGED', prId };
+      }
+
+      soundFX.playActionComplete();
+      setPullRequests((prev) =>
+        prev.map((p) => (p.id === prId ? { ...p, status: 'MERGED' as const } : p))
+      );
+
+      const event = createSimulatedRealityEvent({
+        agentId: 'founder',
+        agentName: 'Alex Founder',
+        worldAction: `Founder merged PR #${pr.number} in demo repository`,
+        businessEvent: 'Simulated CI build and deployment completed successfully (commit #a7f920b)',
+        category: 'DEV',
+        relatedEntityId: prId,
+      });
+
+      setRealityEvents((prev) => [event, ...prev.slice(0, 40)]);
+
+      return { success: true, prId };
+    },
+    [pullRequests]
+  );
+
+  // -------------------------------------------------------------
+  // CANONICAL IDEMPOTENT PAYMENT APPROVAL
+  // -------------------------------------------------------------
+  const approvePayment = useCallback(
+    (invoiceId: string): PaymentApprovalResult => {
+      const invoice = invoices.find((i) => i.id === invoiceId);
+      if (!invoice) {
+        return {
+          success: false,
+          reason: 'INVOICE_NOT_FOUND',
+          balance: treasuryBalance,
+          invoiceId,
+        };
+      }
+
+      if (invoice.status === 'PAID') {
+        // Idempotent: already paid, do nothing
+        return {
+          success: false,
+          reason: 'ALREADY_PAID',
+          balance: treasuryBalance,
+          invoiceId,
+        };
+      }
+
+      if (treasuryBalance < invoice.amount) {
+        return {
+          success: false,
+          reason: 'TREASURY_INSUFFICIENT',
+          balance: treasuryBalance,
+          invoiceId,
+        };
+      }
+
+      soundFX.playPaymentTransfer();
+      const newBalance = Math.round((treasuryBalance - invoice.amount) * 100) / 100;
+      setTreasuryBalance(newBalance);
+      setInvoices((prev) =>
+        prev.map((i) => (i.id === invoiceId ? { ...i, status: 'PAID' as const } : i))
+      );
+
+      const event = createSimulatedRealityEvent({
+        agentId: 'founder',
+        agentName: 'Alex Founder',
+        worldAction: `Founder approved simulated payment for ${invoice.vendorName} ${invoice.invoiceNumber} ($${invoice.amount.toFixed(2)})`,
+        businessEvent: `Demo approval credential #8842 authorized simulated payment from Treasury balance (New balance: $${newBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })})`,
+        category: 'FINANCE',
+        relatedEntityId: invoiceId,
+      });
+
+      setRealityEvents((prev) => [event, ...prev.slice(0, 40)]);
+
+      return {
+        success: true,
+        balance: newBalance,
+        invoiceId,
+      };
+    },
+    [invoices, treasuryBalance]
+  );
+
+  // -------------------------------------------------------------
+  // DEMO 1: VITEK CALL FLOW & PIPELINE (DETERMINISTIC & PROTECTED)
   // -------------------------------------------------------------
   const callVitek = useCallback(() => {
     soundFX.playChime();
@@ -352,7 +497,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       agentId: 'founder',
       agentName: 'Alex Founder',
       worldAction: 'Founder called Vitek to executive desk',
-      businessEvent: 'Dispatched autonomous engineering directive: Onboarding Audit',
+      businessEvent: 'Dispatched simulated engineering directive: Onboarding Audit',
       category: 'DEV',
     });
 
@@ -378,7 +523,6 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     ];
 
     animateAgentWalk('vitek', waypoints, () => {
-      // Arrived at Founder
       soundFX.playTerminalBeep();
       setCharacters((prev) =>
         prev.map((c) =>
@@ -419,8 +563,26 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   }, [addRealityEvent, animateAgentWalk]);
 
-  // Vitek work pipeline execution
   const runVitekEngineeringPipeline = useCallback(() => {
+    // Prevent duplicate workflow run
+    if (activeWorkflows.VITEK_ONBOARDING_FIX?.status === 'RUNNING') {
+      return;
+    }
+
+    const runId = `vitek-onboarding-${Date.now()}`;
+    setActiveWorkflows((prev) => ({
+      ...prev,
+      VITEK_ONBOARDING_FIX: {
+        runId,
+        type: 'VITEK_ONBOARDING_FIX',
+        status: 'RUNNING',
+        currentStep: 1,
+        totalSteps: 5,
+        stepLabel: 'ANALYZING REPOSITORY',
+        startedAt: Date.now(),
+      },
+    }));
+
     setActiveDialogue(null);
     soundFX.playFootstep();
 
@@ -434,21 +596,26 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     ];
 
     animateAgentWalk('vitek', waypoints, () => {
-      // Start pipeline at desk
       const stages = [
-        { label: 'ANALYZING REPOSITORY', duration: 1800, reality: 'Ran AST lint & repo traversal on auth slice' },
-        { label: 'CREATING BRANCH', duration: 1600, reality: 'Created git branch `fix/onboarding-state`' },
-        { label: 'EDITING', duration: 2000, reality: 'Patched useSessionState.ts & VerifyEmail.tsx' },
-        { label: 'RUNNING TESTS', duration: 2200, reality: 'Executed test runner: 42/42 unit & e2e suites passing' },
-        { label: 'OPENING PR', duration: 1600, reality: 'Opened Pull Request #184 with verified diff' },
+        { label: 'ANALYZING REPOSITORY', duration: 1600, reality: 'Ran AST lint & repo traversal on auth slice' },
+        { label: 'CREATING BRANCH', duration: 1400, reality: 'Created git branch `fix/onboarding-state` in demo repo' },
+        { label: 'EDITING', duration: 1800, reality: 'Patched useSessionState.ts & VerifyEmail.tsx' },
+        { label: 'RUNNING TESTS', duration: 1800, reality: 'Executed test runner: 42/42 simulated unit suites passing' },
+        { label: 'OPENING PR', duration: 1400, reality: 'Opened Pull Request #184 with verified diff' },
       ];
 
       let currentStageIdx = 0;
 
       const advanceStage = () => {
         if (currentStageIdx >= stages.length) {
-          // Pipeline complete! Vitek stands up and walks back to Founder!
           soundFX.playActionComplete();
+          setActiveWorkflows((prev) => ({
+            ...prev,
+            VITEK_ONBOARDING_FIX: prev.VITEK_ONBOARDING_FIX
+              ? { ...prev.VITEK_ONBOARDING_FIX, status: 'COMPLETED', stepLabel: 'PR #184 Ready' }
+              : undefined,
+          }));
+
           setCharacters((prev) =>
             prev.map((c) =>
               c.id === 'vitek'
@@ -483,11 +650,11 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               speakerRole: 'AI Staff Engineer',
               avatarColor: '#3b82f6',
               message:
-                'Found it. The signup state was being reset after email verification.\n\nPR #184 created.\n42/42 tests passing.\n\nWant me to call QA?',
+                'Found it. The signup state was being reset after email verification.\n\nPR #184 created in demo repo.\n42/42 tests passing.\n\nWant me to call QA or review the PR?',
               options: [
                 { label: 'VIEW PR #184', actionId: 'VIEW_PR_184', primary: true },
-                { label: 'CALL QA', actionId: 'VITEK_CALL_QA' },
-                { label: 'APPROVE', actionId: 'VITEK_APPROVE', variant: 'success' },
+                { label: 'SIMULATE QA RUN', actionId: 'VITEK_CALL_QA' },
+                { label: 'APPROVE & MERGE', actionId: 'VITEK_APPROVE', variant: 'success' },
                 { label: 'NOT NOW', actionId: 'VITEK_DISMISS' },
               ],
             });
@@ -497,6 +664,14 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
         const stage = stages[currentStageIdx];
         soundFX.playTerminalBeep();
+
+        setActiveWorkflows((prev) => ({
+          ...prev,
+          VITEK_ONBOARDING_FIX: prev.VITEK_ONBOARDING_FIX
+            ? { ...prev.VITEK_ONBOARDING_FIX, currentStep: currentStageIdx + 1, stepLabel: stage.label }
+            : undefined,
+        }));
+
         setCharacters((prev) =>
           prev.map((c) =>
             c.id === 'vitek'
@@ -518,25 +693,44 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         });
 
         currentStageIdx++;
-        setTimeout(advanceStage, stage.duration);
+        safeSetTimeout(advanceStage, stage.duration);
       };
 
       advanceStage();
     });
-  }, [animateAgentWalk, addRealityEvent]);
+  }, [activeWorkflows.VITEK_ONBOARDING_FIX, animateAgentWalk, addRealityEvent, safeSetTimeout]);
 
   // -------------------------------------------------------------
-  // DEMO 2: MAYA EXTERNAL ACME SHIPMENT DEMO
+  // DEMO 2: MAYA EXTERNAL ACME SHIPMENT (DETERMINISTIC & PROTECTED)
   // -------------------------------------------------------------
   const startMayaAcmeWorkflow = useCallback(() => {
+    // Prevent duplicate workflow run
+    if (activeWorkflows.MAYA_ACME_SHIPMENT?.status === 'RUNNING') {
+      return;
+    }
+
+    const runId = `maya-acme-${Date.now()}`;
+    setActiveWorkflows((prev) => ({
+      ...prev,
+      MAYA_ACME_SHIPMENT: {
+        runId,
+        type: 'MAYA_ACME_SHIPMENT',
+        status: 'RUNNING',
+        currentStep: 1,
+        totalSteps: 4,
+        stepLabel: 'Preparing supplier inquiry',
+        startedAt: Date.now(),
+      },
+    }));
+
     setActiveDialogue(null);
     soundFX.playChime();
 
     addRealityEvent({
       agentId: 'maya',
       agentName: 'Maya',
-      worldAction: 'Maya initiated external supplier query to Acme Manufacturing',
-      businessEvent: 'Transmitting RFC-822 authenticated dispatch on Email Rail',
+      worldAction: 'Maya initiated external supplier inquiry to Acme Manufacturing',
+      businessEvent: 'Simulated dispatch prepared on asynchronous email rail',
       category: 'SUPPLY',
     });
 
@@ -562,16 +756,23 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     ];
 
     animateAgentWalk('maya', waypoints, () => {
-      // Simulated Email Rail transmission
-      setTimeout(() => {
+      // Step 2: Simulated Email Rail dispatch
+      safeSetTimeout(() => {
         soundFX.playTerminalBeep();
         addRealityEvent({
           agentId: 'maya',
           agentName: 'Maya',
-          worldAction: 'EMAIL RAIL: Outgoing email sent to vendor-support@acme-mfg.internal',
-          businessEvent: 'PO #511 Customs Hold Inquiry dispatched',
+          worldAction: 'EMAIL RAIL (SIMULATED): Simulated outbound email created for vendor-support@acme-mfg.internal',
+          businessEvent: 'Simulated PO #511 Customs Hold inquiry dispatched to asynchronous supplier rail',
           category: 'SUPPLY',
         });
+
+        setActiveWorkflows((prev) => ({
+          ...prev,
+          MAYA_ACME_SHIPMENT: prev.MAYA_ACME_SHIPMENT
+            ? { ...prev.MAYA_ACME_SHIPMENT, currentStep: 2, stepLabel: 'Awaiting supplier reply' }
+            : undefined,
+        }));
 
         setCharacters((prev) =>
           prev.map((c) =>
@@ -585,18 +786,25 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           )
         );
 
-        // Simulated asynchronous supplier response
-        setTimeout(() => {
+        // Step 3: Simulated asynchronous supplier response
+        safeSetTimeout(() => {
           soundFX.playActionComplete();
           addRealityEvent({
             agentId: 'acme',
             agentName: 'Acme Manufacturing (External)',
-            worldAction: 'ACME RESPONSE RECEIVED via Email Rail',
+            worldAction: 'SIMULATED SUPPLIER RESPONSE: Acme response received on email rail',
             businessEvent: '“Shipment delayed at customs. New ETA: Friday. We can offer a $400 credit.”',
             category: 'SUPPLY',
           });
 
-          // Maya walks back to Founder office to report!
+          setActiveWorkflows((prev) => ({
+            ...prev,
+            MAYA_ACME_SHIPMENT: prev.MAYA_ACME_SHIPMENT
+              ? { ...prev.MAYA_ACME_SHIPMENT, currentStep: 3, stepLabel: 'Acme credit received' }
+              : undefined,
+          }));
+
+          // Maya walks back to Founder office to report
           setCharacters((prev) =>
             prev.map((c) =>
               c.id === 'maya'
@@ -623,6 +831,13 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               )
             );
 
+            setActiveWorkflows((prev) => ({
+              ...prev,
+              MAYA_ACME_SHIPMENT: prev.MAYA_ACME_SHIPMENT
+                ? { ...prev.MAYA_ACME_SHIPMENT, status: 'WAITING_INPUT', stepLabel: 'Awaiting founder decision' }
+                : undefined,
+            }));
+
             setActiveDialogue({
               characterId: 'maya',
               stage: 'MAYA_ACME_REPORT',
@@ -634,20 +849,37 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               options: [
                 { label: 'ACCEPT CREDIT', actionId: 'MAYA_ACCEPT_CREDIT', primary: true, variant: 'success' },
                 { label: 'NEGOTIATE ($600 credit)', actionId: 'MAYA_NEGOTIATE' },
-                { label: 'ESCALATE TO CARRIER', actionId: 'MAYA_ESCALATE', variant: 'danger' },
-                { label: 'VIEW EMAIL THREAD', actionId: 'VIEW_EMAIL_THREAD' },
+                { label: 'VIEW SIMULATED EMAIL THREAD', actionId: 'VIEW_EMAIL_THREAD' },
               ],
             });
           });
-        }, 3200);
-      }, 1500);
+        }, 2800);
+      }, 1400);
     });
-  }, [animateAgentWalk, addRealityEvent]);
+  }, [activeWorkflows.MAYA_ACME_SHIPMENT, animateAgentWalk, addRealityEvent, safeSetTimeout]);
 
   // -------------------------------------------------------------
-  // DEMO 3: NORTHSTAR CROSS-COMPANY COLLAB (ALEX + NOVA)
+  // DEMO 3: NORTHSTAR CROSS-COMPANY COLLAB (DETERMINISTIC & PROTECTED)
   // -------------------------------------------------------------
   const startNorthstarDesignCollab = useCallback(() => {
+    if (activeWorkflows.NOVA_DESIGN_COLLAB?.status === 'RUNNING') {
+      return;
+    }
+
+    const runId = `northstar-collab-${Date.now()}`;
+    setActiveWorkflows((prev) => ({
+      ...prev,
+      NOVA_DESIGN_COLLAB: {
+        runId,
+        type: 'NOVA_DESIGN_COLLAB',
+        status: 'RUNNING',
+        currentStep: 1,
+        totalSteps: 3,
+        stepLabel: 'Collaborating on mobile onboarding tokens',
+        startedAt: Date.now(),
+      },
+    }));
+
     setActiveDialogue(null);
     soundFX.playChime();
 
@@ -672,8 +904,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
     );
 
-    // Both walk to collaboration table (coords: 14, 5 and 16, 5)
-    setTimeout(() => {
+    safeSetTimeout(() => {
       soundFX.playFootstep();
       setCharacters((prev) =>
         prev.map((c) => {
@@ -701,18 +932,17 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         })
       );
 
-      // Conversational work bubbles
-      setTimeout(() => {
+      safeSetTimeout(() => {
         soundFX.playTerminalBeep();
         addRealityEvent({
           agentId: 'nova',
           agentName: 'Nova (Northstar AI)',
           worldAction: 'Nova highlighted layout bug: “The current component breaks Northstar’s mobile grid.”',
-          businessEvent: 'Auto-refactoring 8pt fluid padding container',
+          businessEvent: 'Auto-refactoring 8pt fluid padding container in design sandbox',
           category: 'DESIGN',
         });
 
-        setTimeout(() => {
+        safeSetTimeout(() => {
           soundFX.playTerminalBeep();
           addRealityEvent({
             agentId: 'alex-designer',
@@ -722,7 +952,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             category: 'DESIGN',
           });
 
-          setTimeout(() => {
+          safeSetTimeout(() => {
             soundFX.playActionComplete();
             addRealityEvent({
               agentId: 'nova',
@@ -731,6 +961,13 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               businessEvent: 'Generated responsive design tokens & prototype bundle',
               category: 'DESIGN',
             });
+
+            setActiveWorkflows((prev) => ({
+              ...prev,
+              NOVA_DESIGN_COLLAB: prev.NOVA_DESIGN_COLLAB
+                ? { ...prev.NOVA_DESIGN_COLLAB, status: 'WAITING_INPUT', stepLabel: 'Design V2 Ready' }
+                : undefined,
+            }));
 
             setCharacters((prev) =>
               prev.map((c) => {
@@ -759,14 +996,14 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 { label: 'CLOSE', actionId: 'DISMISS_DIALOGUE' },
               ],
             });
-          }, 2400);
-        }, 2200);
-      }, 1600);
+          }, 2000);
+        }, 1800);
+      }, 1400);
     }, 600);
-  }, [addRealityEvent]);
+  }, [activeWorkflows.NOVA_DESIGN_COLLAB, addRealityEvent, safeSetTimeout]);
 
   // -------------------------------------------------------------
-  // DEMO 4: CLOUDWORKS CUSTOMER SUPPORT DEMO
+  // DEMO 4: CLOUDWORKS SUPPORT FLOW (DETERMINISTIC & PROTECTED)
   // -------------------------------------------------------------
   const startCloudWorksSupportFlow = useCallback(() => {
     soundFX.playChime();
@@ -790,6 +1027,45 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ],
     });
   }, []);
+
+  // -------------------------------------------------------------
+  // RESET DEMO TO INITIAL PARAMETERS
+  // -------------------------------------------------------------
+  const resetDemo = useCallback(() => {
+    clearAllTimers();
+    soundFX.playChime();
+
+    const fresh = createInitialDemoState();
+    setInvoices(fresh.invoices);
+    setTreasuryBalance(fresh.treasuryBalance);
+    setPullRequests(fresh.pullRequests);
+    setCharacters(fresh.characters);
+    setTasks(fresh.tasks);
+    setIdentity(fresh.identity);
+    setActiveWorkflows(fresh.workflows);
+
+    setCurrentLocation('MY_COMPANY');
+    setSelectedOrganization(null);
+    setCustomerMode(false);
+    setActiveDialogue(null);
+
+    setShowPRModal(false);
+    setShowEmailThreadModal(false);
+    setShowDesignReviewModal(false);
+    setShowTreasuryModal(false);
+    setShowIdentityModal(false);
+    setShowCommandPalette(false);
+
+    const resetEvt = createSimulatedRealityEvent({
+      agentId: 'system',
+      agentName: 'System',
+      worldAction: 'Demo state reset to initial parameters',
+      businessEvent: 'Simulation memory and workflows reinitialized (Deterministic Sandbox)',
+      category: 'GENERAL',
+    });
+
+    setRealityEvents([resetEvt, ...fresh.realityEvents]);
+  }, [clearAllTimers]);
 
   // -------------------------------------------------------------
   // INTERACT WITH CHARACTERS (CLICK / APPROACH)
@@ -880,9 +1156,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           options: [
             { label: 'Existing project', actionId: 'NS_EXISTING_PROJECT', primary: true },
             { label: 'New project inquiry', actionId: 'NS_NEW_PROJECT' },
-            { label: 'Billing & Invoicing', actionId: 'NS_BILLING' },
             { label: 'Partnership overview', actionId: 'NS_PARTNERSHIP' },
-            { label: 'Talk to someone', actionId: 'NS_TALK_SOMEONE' },
           ],
         });
       } else if (charId === 'nova') {
@@ -933,7 +1207,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             { label: 'Merge after tests pass.', actionId: 'VITEK_MERGE_DIRECT' },
           ],
         });
-      } else if (actionId === 'VITEK_PR_ONLY') {
+      } else if (actionId === 'VITEK_PR_ONLY' || actionId === 'VITEK_MERGE_DIRECT') {
         setActiveDialogue({
           characterId: 'vitek',
           stage: 'VITEK_START_WORK',
@@ -943,9 +1217,9 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           message: 'Got it. I’ll come back when it’s ready.',
           options: [],
         });
-        setTimeout(() => {
+        safeSetTimeout(() => {
           runVitekEngineeringPipeline();
-        }, 900);
+        }, 800);
       } else if (actionId === 'VIEW_PR_184') {
         setActiveDialogue(null);
         setShowPRModal(true);
@@ -955,7 +1229,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           agentId: 'vitek',
           agentName: 'Vitek',
           worldAction: 'Vitek triggered automated QA suite dispatch',
-          businessEvent: 'Cypress & Playwright synthetic worker pool allocated for PR #184',
+          businessEvent: 'Simulated automated test suite completed for PR #184',
           category: 'DEV',
         });
         setActiveDialogue({
@@ -971,24 +1245,15 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           ],
         });
       } else if (actionId === 'VITEK_APPROVE') {
-        soundFX.playActionComplete();
-        setPullRequests((prev) =>
-          prev.map((pr) => (pr.id === 'pr-184' ? { ...pr, status: 'MERGED' } : pr))
-        );
-        addRealityEvent({
-          agentId: 'founder',
-          agentName: 'Alex Founder',
-          worldAction: 'Founder merged Pull Request #184 into `main`',
-          businessEvent: 'CI/CD pipeline deployed commit #a7f920b to production',
-          category: 'DEV',
-        });
+        // CANONICAL PR MERGE INVOCATION
+        mergePullRequest('pr-184');
         setActiveDialogue({
           characterId: 'vitek',
           stage: 'VITEK_APPROVED',
           speaker: 'Vitek',
           speakerRole: 'AI Staff Engineer',
           avatarColor: '#3b82f6',
-          message: 'PR #184 merged. Production deploy verified green. Returning to Engineering.',
+          message: 'PR #184 merged in demo repo. Simulated deployment completed successfully. Returning to Engineering.',
           options: [{ label: 'DISMISS', actionId: 'VITEK_DISMISS' }],
         });
       } else if (actionId === 'VITEK_DISMISS') {
@@ -1036,7 +1301,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   amount: 418.0,
                   items: [
                     { description: 'Precision CNC Aluminum Chassis Units (Batch 1)', quantity: 2, unitPrice: 409.0 },
-                    { description: 'Customs Delay Service Credit (Agreed via Email Rail)', quantity: 1, unitPrice: -400.0 },
+                    { description: 'Customs Delay Courtesy Credit (Agreed via Email Rail Demo)', quantity: 1, unitPrice: -400.0 },
                   ],
                 }
               : inv
@@ -1045,10 +1310,16 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         addRealityEvent({
           agentId: 'maya',
           agentName: 'Maya',
-          worldAction: 'Maya accepted $400 vendor credit for customs delay',
+          worldAction: 'Maya accepted $400 courtesy credit for customs delay',
           businessEvent: 'Revised Acme Invoice #511 down to $418.00; pending founder signature',
           category: 'FINANCE',
         });
+        setActiveWorkflows((prev) => ({
+          ...prev,
+          MAYA_ACME_SHIPMENT: prev.MAYA_ACME_SHIPMENT
+            ? { ...prev.MAYA_ACME_SHIPMENT, status: 'COMPLETED', stepLabel: 'Credit accepted ($400)' }
+            : undefined,
+        }));
         setActiveDialogue({
           characterId: 'maya',
           stage: 'MAYA_CREDIT_ACCEPTED',
@@ -1105,6 +1376,22 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       } else if (actionId === 'REVIEW_DESIGN_V2') {
         setActiveDialogue(null);
         setShowDesignReviewModal(true);
+      } else if (actionId === 'APPROVE_DESIGN_DIRECT') {
+        soundFX.playActionComplete();
+        addRealityEvent({
+          agentId: 'founder',
+          agentName: 'Alex Founder',
+          worldAction: 'Founder signed off on Project Apollo Design V2 tokens',
+          businessEvent: 'Exported Figma token bundle to Northstar and synced repo styling variables',
+          category: 'DESIGN',
+        });
+        setActiveWorkflows((prev) => ({
+          ...prev,
+          NOVA_DESIGN_COLLAB: prev.NOVA_DESIGN_COLLAB
+            ? { ...prev.NOVA_DESIGN_COLLAB, status: 'COMPLETED', stepLabel: 'Design V2 Approved' }
+            : undefined,
+        }));
+        setActiveDialogue(null);
       }
 
       // CLOUDWORKS ACTIONS
@@ -1118,7 +1405,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           message:
             'I can check that. Can I access your CloudWorks subscription account and billing telemetry?',
           options: [
-            { label: 'ALLOW ONCE', actionId: 'CW_ALLOW_ONCE', primary: true, variant: 'success' },
+            { label: 'ALLOW ONCE (DEMO)', actionId: 'CW_ALLOW_ONCE', primary: true, variant: 'success' },
             { label: 'CANCEL', actionId: 'DISMISS_DIALOGUE' },
           ],
         });
@@ -1127,8 +1414,8 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         addRealityEvent({
           agentId: 'cloudworks-agent',
           agentName: 'Dex (CloudWorks AI)',
-          worldAction: 'Identity grant verified: Temporary read access to Customer #84922',
-          businessEvent: 'Queried entitlement ledger for transaction #tx_984210',
+          worldAction: 'Simulated identity grant verified: Temporary read access to Customer #84922',
+          businessEvent: 'Simulated entitlement lookup completed for transaction #tx_984210',
           category: 'SUPPORT',
         });
         setActiveDialogue({
@@ -1139,11 +1426,10 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           avatarColor: '#10b981',
           message:
             'Found it.\n\nPayment succeeded yesterday, but the entitlement update failed in webhook dispatch.\n\nI can restore Pro immediately and open a billing incident for the duplicate state.',
-          options: [{ label: 'FIX IT', actionId: 'CW_FIX_IT', primary: true, variant: 'success' }],
+          options: [{ label: 'FIX IT (SIMULATION)', actionId: 'CW_FIX_IT', primary: true, variant: 'success' }],
         });
       } else if (actionId === 'CW_FIX_IT') {
         soundFX.playActionComplete();
-        // Update identity profile
         setIdentity((prev) => ({
           ...prev,
           cloudWorksAccount: 'Customer #84922 (Pro Tier · Active)',
@@ -1151,8 +1437,8 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         addRealityEvent({
           agentId: 'cloudworks-agent',
           agentName: 'Dex (CloudWorks AI)',
-          worldAction: 'PRO ACCESS RESTORED · Case CW-18421 closed',
-          businessEvent: 'Provisioned unlimited cluster instances & edge caching',
+          worldAction: 'SIMULATED PRO ACCESS RESTORED · Demo Case CW-18421 closed',
+          businessEvent: 'Simulated cluster entitlement refreshed for demo customer',
           category: 'SUPPORT',
         });
         setActiveDialogue({
@@ -1162,7 +1448,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           speakerRole: 'AI Support Specialist · CloudWorks',
           avatarColor: '#10b981',
           message:
-            'PRO ACCESS RESTORED\n\nCase: CW-18421\n\nNo forms. No phone calls. Your cluster credentials have been re-synced.',
+            'SIMULATED PRO ACCESS RESTORED\n\nDemo Case: CW-18421\n\nDemonstration complete: simulated entitlement re-synced without human tickets or waiting.',
           options: [{ label: 'DONE', actionId: 'DISMISS_DIALOGUE' }],
         });
       }
@@ -1185,48 +1471,9 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       teleportToRoom,
       startNorthstarDesignCollab,
       addRealityEvent,
+      mergePullRequest,
+      safeSetTimeout,
     ]
-  );
-
-  // Payment approval simulation
-  const approvePayment = useCallback(
-    (invoiceId: string) => {
-      soundFX.playPaymentTransfer();
-      const invoice = invoices.find((i) => i.id === invoiceId);
-      if (!invoice) return;
-
-      setTreasuryBalance((prev) => prev - invoice.amount);
-      setInvoices((prev) =>
-        prev.map((i) => (i.id === invoiceId ? { ...i, status: 'PAID' } : i))
-      );
-
-      addRealityEvent({
-        agentId: 'founder',
-        agentName: 'Alex Founder',
-        worldAction: `Founder approved payment for Acme Invoice ${invoice.invoiceNumber} ($${invoice.amount})`,
-        businessEvent: `Biometric key #8842 authorized instant wire from Treasury balance`,
-        category: 'FINANCE',
-      });
-    },
-    [invoices, addRealityEvent]
-  );
-
-  // Merge PR simulation
-  const mergePullRequest = useCallback(
-    (prId: string) => {
-      soundFX.playActionComplete();
-      setPullRequests((prev) =>
-        prev.map((pr) => (pr.id === prId ? { ...pr, status: 'MERGED' } : pr))
-      );
-      addRealityEvent({
-        agentId: 'founder',
-        agentName: 'Alex Founder',
-        worldAction: `Founder merged PR #184 into main branch`,
-        businessEvent: 'Automated CI/CD build triggered; container image pushed to CloudWorks cluster',
-        category: 'DEV',
-      });
-    },
-    [addRealityEvent]
   );
 
   return (
@@ -1273,6 +1520,8 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setShowCommandPalette,
         showFirstRunBanner,
         setShowFirstRunBanner,
+        activeWorkflows,
+        isWorkflowRunning,
         callVitek,
         interactWithCharacter,
         handleDialogueOption,
@@ -1282,6 +1531,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         approvePayment,
         mergePullRequest,
         addRealityEvent,
+        resetDemo,
       }}
     >
       {children}

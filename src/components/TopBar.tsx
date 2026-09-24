@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { useWorld } from '../context/WorldContext';
+import { DemoModeBadge } from './DemoModeBadge';
 import {
   Search,
   Wallet,
@@ -60,9 +61,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
         <span className="font-bold text-base tracking-tight text-white flex items-center gap-2">
           Business World
-          <span className="text-[10px] uppercase font-mono font-semibold tracking-wider text-sky-400 bg-sky-950/80 px-2 py-0.5 rounded border border-sky-800/60">
-            PROTOTYPE
-          </span>
+          <DemoModeBadge />
         </span>
       </div>
 

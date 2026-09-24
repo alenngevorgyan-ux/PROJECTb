@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { useWorld } from '../context/WorldContext';
+import { SimulatedActionBadge } from './DemoModeBadge';
 import {
   Palette,
   Sparkles,
@@ -56,6 +57,7 @@ export const DesignReviewModal: React.FC = () => {
                 <span className="text-sm font-bold text-white">
                   Project Apollo: Design V2 Review
                 </span>
+                <SimulatedActionBadge type="WORKFLOW" />
                 <span className="text-[10px] font-mono text-indigo-400 bg-indigo-950 px-2 py-0.5 rounded border border-indigo-800/60">
                   NORTHSTAR × MY COMPANY
                 </span>

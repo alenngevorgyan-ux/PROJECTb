@@ -221,7 +221,7 @@ export const ACME_ROOMS: Room[] = [
     id: 'acme-comms-room',
     companyId: 'acme-manufacturing',
     name: 'Acme Communication Rail (Email Dispatch)',
-    description: 'External asynchronous rail station exchanging authenticated SMTP messages.',
+    description: 'External asynchronous supplier communication rail (simulated email interchange).',
     bounds: { x: 12, y: 2, width: 7, height: 8 },
     color: '#ea580c',
     iconName: 'Mail',
@@ -488,7 +488,7 @@ export const INITIAL_REALITY_EVENTS: RealityEvent[] = [
     agentId: 'founder',
     agentName: 'Alex Founder',
     worldAction: 'Founder walked to Executive Desk',
-    businessEvent: 'Authenticated session with Verified Keyring #8842',
+    businessEvent: 'Authenticated demo session with Role Keyring #8842',
     category: 'GENERAL',
   },
 ];

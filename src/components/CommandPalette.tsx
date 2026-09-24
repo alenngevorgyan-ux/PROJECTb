@@ -26,6 +26,7 @@ export const CommandPalette: React.FC = () => {
     callVitek,
     setShowTreasuryModal,
     setShowPRModal,
+    resetDemo,
   } = useWorld();
 
   const [query, setQuery] = useState('');
@@ -101,7 +102,7 @@ export const CommandPalette: React.FC = () => {
     {
       id: 'act-pr',
       title: 'View Pull Request #184',
-      subtitle: 'Vitek · Auth signup state fix (42/42 tests passing)',
+      subtitle: 'Vitek · Auth signup state fix (42/42 simulated tests passing)',
       category: 'Tasks & Repositories',
       action: () => {
         setShowCommandPalette(false);
@@ -116,6 +117,17 @@ export const CommandPalette: React.FC = () => {
       action: () => {
         setShowCommandPalette(false);
         setShowTreasuryModal(true);
+      },
+    },
+    {
+      id: 'act-reset-demo',
+      title: 'Reset Demo Environment',
+      subtitle: 'Restore initial demo state, characters, invoices, and workflows',
+      category: 'Demo Controls',
+      badge: 'RESET',
+      action: () => {
+        resetDemo();
+        setShowCommandPalette(false);
       },
     },
   ];
