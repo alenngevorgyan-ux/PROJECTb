@@ -1,0 +1,6 @@
+{
+  "name": "Business World",
+  "description": "A persistent 2D pixel-art playable world connecting real companies, employees, and autonomous AI agents.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
