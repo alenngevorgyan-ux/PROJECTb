@@ -10,6 +10,8 @@ import {
   executeApprovePayment,
   executeMergePullRequest,
   executeStartWorkflow,
+  executeUpdateWorkflowStep,
+  executeAcceptSupplierCredit,
   DemoEngine,
   createDemoEngine,
 } from '../src/domain/demoEngine.ts';
@@ -18,7 +20,7 @@ describe('Demo Domain Rules & Idempotency', () => {
   it('1. Calling approvePayment twice: balance decreases once only', () => {
     const initialState = createInitialDemoState();
     const initialBalance = initialState.treasuryBalance; // 128450
-    const targetInvoice = initialState.invoices[0]; // inv-511, 418.00
+    const targetInvoice = initialState.invoices[0]; // inv-511, 818.00
 
     // First call
     const firstCall = executeApprovePayment(initialState, targetInvoice.id);
@@ -138,6 +140,7 @@ describe('Live Engine & Same-Tick Race Protection (WorldContext Action Semantics
 
     const initialBalance = liveEngine.getState().treasuryBalance;
     const initialEvents = liveEngine.getState().realityEvents.length;
+    const invoiceAmount = liveEngine.getState().invoices.find((i) => i.id === 'inv-511')!.amount; // 818.0
 
     // Simulate same-tick invocations before any React re-render:
     // approvePayment('inv-511');
@@ -147,14 +150,14 @@ describe('Live Engine & Same-Tick Race Protection (WorldContext Action Semantics
 
     assert.equal(first.result.success, true);
     assert.ok(first.eventCreated, 'First call must create an event');
-    assert.equal(first.result.balance, initialBalance - 418.0);
+    assert.equal(first.result.balance, initialBalance - invoiceAmount);
 
     assert.equal(second.result.success, false, 'Second call must be rejected');
     assert.equal(second.result.reason, 'ALREADY_PAID');
     assert.equal(second.eventCreated, undefined, 'Second call must NOT create a duplicate event');
 
     const finalState = liveEngine.getState();
-    assert.equal(finalState.treasuryBalance, initialBalance - 418.0, 'Balance must decrease once only');
+    assert.equal(finalState.treasuryBalance, initialBalance - invoiceAmount, 'Balance must decrease once only');
     assert.equal(finalState.realityEvents.length, initialEvents + 1, 'Exactly one reality event added');
     assert.equal(finalState.invoices.find((i: any) => i.id === 'inv-511')?.status, 'PAID');
   });
@@ -251,6 +254,7 @@ describe('Live Engine & Same-Tick Race Protection (WorldContext Action Semantics
     // Simulate WorldContext state setters and event dispatching
     let liveTreasuryBalance = 128450;
     const emittedEvents: any[] = [];
+    const invAmount = engine.getState().invoices.find((i) => i.id === 'inv-511')!.amount; // 818.0
 
     const liveApprovePayment = (invoiceId: string) => {
       const { result, eventCreated, nextState } = engine.approvePayment(invoiceId);
@@ -271,7 +275,151 @@ describe('Live Engine & Same-Tick Race Protection (WorldContext Action Semantics
     assert.equal(call1.success, true);
     assert.equal(call2.success, false);
     assert.equal(call2.reason, 'ALREADY_PAID');
-    assert.equal(liveTreasuryBalance, 128450 - 418.0);
+    assert.equal(liveTreasuryBalance, 128450 - invAmount);
     assert.equal(emittedEvents.length, 1, 'Only one event was pushed to the event stream');
+  });
+});
+
+describe('Supplier Credit & Story State Transitions (Issues 1-6)', () => {
+  it('TEST A: Initial Invoice #511 amount === 818, no credit line item', () => {
+    const initialState = createInitialDemoState();
+    const inv511 = initialState.invoices.find((i) => i.id === 'inv-511');
+
+    assert.ok(inv511, 'Invoice #511 must exist');
+    assert.equal(inv511?.amount, 818.0, 'Initial amount must be 818.00');
+    assert.equal(inv511?.status, 'PENDING_APPROVAL');
+    assert.equal(inv511?.items.length, 1, 'Must contain only 1 item initially');
+    assert.equal(inv511?.items[0].description, 'Precision CNC Aluminum Chassis Units (Batch 1)');
+    assert.equal(inv511?.items[0].quantity, 2);
+    assert.equal(inv511?.items[0].unitPrice, 409.0);
+
+    const hasCredit = inv511?.items.some((item) => item.unitPrice < 0);
+    assert.equal(hasCredit, false, 'Initial state must NOT have a credit line item');
+  });
+
+  it('TEST B: Accept $400 supplier credit: 818 -> 418, one credit line added', () => {
+    const engine = new DemoEngine();
+    const initialEvents = engine.getState().realityEvents.length;
+
+    const res = engine.acceptSupplierCredit('inv-511', 400.0);
+    assert.equal(res.result.success, true);
+    assert.equal(res.result.previousAmount, 818.0);
+    assert.equal(res.result.newAmount, 418.0);
+    assert.equal(res.result.creditApplied, 400.0);
+    assert.ok(res.eventCreated, 'Acceptance event created');
+
+    const state = engine.getState();
+    const inv511 = state.invoices.find((i) => i.id === 'inv-511');
+    assert.equal(inv511?.amount, 418.0);
+    assert.equal(inv511?.items.length, 2);
+    assert.equal(inv511?.items[1].unitPrice, -400.0);
+    assert.equal(state.realityEvents.length, initialEvents + 1);
+  });
+
+  it('TEST C: Accept the credit twice: still 418, only one credit line, only one acceptance event', () => {
+    const engine = new DemoEngine();
+    const initialEvents = engine.getState().realityEvents.length;
+
+    // First acceptance
+    const call1 = engine.acceptSupplierCredit('inv-511', 400.0);
+    assert.equal(call1.result.success, true);
+    assert.equal(call1.result.newAmount, 418.0);
+    assert.ok(call1.eventCreated);
+
+    // Second acceptance (same tick / duplicate call)
+    const call2 = engine.acceptSupplierCredit('inv-511', 400.0);
+    assert.equal(call2.result.success, false);
+    assert.equal(call2.result.reason, 'CREDIT_ALREADY_APPLIED');
+    assert.equal(call2.eventCreated, undefined, 'No duplicate event created');
+
+    const state = engine.getState();
+    const inv511 = state.invoices.find((i) => i.id === 'inv-511');
+    assert.equal(inv511?.amount, 418.0, 'Amount must remain 418.00');
+    assert.equal(inv511?.items.length, 2, 'Only one credit line item exists');
+    assert.equal(state.realityEvents.length, initialEvents + 1, 'Only one event added to stream');
+  });
+
+  it('TEST D: Reset after accepting credit: invoice returns to 818, credit line removed, supplier workflow cleared', () => {
+    const engine = new DemoEngine();
+
+    // Start Maya workflow and accept credit
+    engine.startWorkflow('MAYA_ACME_SHIPMENT', 4, 'Initiating');
+    engine.acceptSupplierCredit('inv-511', 400.0);
+
+    const mutatedState = engine.getState();
+    assert.equal(mutatedState.invoices.find((i) => i.id === 'inv-511')?.amount, 418.0);
+    assert.equal(mutatedState.workflows.MAYA_ACME_SHIPMENT?.status, 'RUNNING');
+
+    // Reset demo
+    engine.reset();
+
+    const resetState = engine.getState();
+    const resetInv511 = resetState.invoices.find((i) => i.id === 'inv-511');
+    assert.equal(resetInv511?.amount, 818.0, 'Invoice amount must return to 818.00');
+    assert.equal(resetInv511?.items.length, 1, 'Credit line item must be removed');
+    assert.equal(resetInv511?.status, 'PENDING_APPROVAL');
+    assert.equal(resetState.workflows.MAYA_ACME_SHIPMENT, undefined, 'Supplier workflow must be cleared');
+  });
+
+  it('TEST E: Supplier reply availability: before supplier-response workflow state reply is unavailable; after it becomes available', () => {
+    const engine = new DemoEngine();
+
+    // 1. Initial: Maya has not started workflow
+    let workflow = engine.getState().workflows.MAYA_ACME_SHIPMENT;
+    let isSupplierResponseAvailable =
+      workflow !== undefined && (workflow.currentStep >= 3 || workflow.status === 'COMPLETED');
+    assert.equal(isSupplierResponseAvailable, false, 'Supplier response must NOT be available initially');
+
+    // 2. Step 1: Maya starts workflow
+    engine.startWorkflow('MAYA_ACME_SHIPMENT', 4, 'Preparing inquiry');
+    workflow = engine.getState().workflows.MAYA_ACME_SHIPMENT;
+    isSupplierResponseAvailable =
+      workflow !== undefined && (workflow.currentStep >= 3 || workflow.status === 'COMPLETED');
+    assert.equal(isSupplierResponseAvailable, false, 'Supplier response must NOT be available on step 1');
+
+    // 3. Step 2: Simulated inquiry in flight
+    engine.updateWorkflowStep('MAYA_ACME_SHIPMENT', workflow!.runId, 2, 'Awaiting supplier reply', 'RUNNING');
+    workflow = engine.getState().workflows.MAYA_ACME_SHIPMENT;
+    isSupplierResponseAvailable =
+      workflow !== undefined && (workflow.currentStep >= 3 || workflow.status === 'COMPLETED');
+    assert.equal(isSupplierResponseAvailable, false, 'Supplier response must NOT be available on step 2');
+
+    // 4. Step 3: Supplier response received
+    engine.updateWorkflowStep('MAYA_ACME_SHIPMENT', workflow!.runId, 3, 'Acme credit received', 'RUNNING');
+    workflow = engine.getState().workflows.MAYA_ACME_SHIPMENT;
+    isSupplierResponseAvailable =
+      workflow !== undefined && (workflow.currentStep >= 3 || workflow.status === 'COMPLETED');
+    assert.equal(isSupplierResponseAvailable, true, 'Supplier response MUST be available on step 3');
+
+    // 5. Reset: response becomes unavailable again
+    engine.reset();
+    workflow = engine.getState().workflows.MAYA_ACME_SHIPMENT;
+    isSupplierResponseAvailable =
+      workflow !== undefined && (workflow.currentStep >= 3 || workflow.status === 'COMPLETED');
+    assert.equal(isSupplierResponseAvailable, false, 'Supplier response must be unavailable after reset');
+  });
+
+  it('TEST F: Payment after accepted credit: invoice = 418, payment succeeds once, treasury decreases exactly 418, second attempt rejected', () => {
+    const engine = new DemoEngine();
+    const initialTreasury = engine.getState().treasuryBalance; // 128450
+
+    // Accept credit
+    const creditRes = engine.acceptSupplierCredit('inv-511', 400.0);
+    assert.equal(creditRes.result.success, true);
+    assert.equal(creditRes.result.newAmount, 418.0);
+    assert.equal(engine.getState().invoices.find((i) => i.id === 'inv-511')?.amount, 418.0);
+
+    // Pay invoice
+    const pay1 = engine.approvePayment('inv-511');
+    assert.equal(pay1.result.success, true);
+    assert.equal(pay1.result.balance, initialTreasury - 418.0);
+    assert.equal(engine.getState().treasuryBalance, initialTreasury - 418.0, 'Balance must decrease by exactly 418.00');
+    assert.equal(engine.getState().invoices.find((i) => i.id === 'inv-511')?.status, 'PAID');
+
+    // Second payment attempt
+    const pay2 = engine.approvePayment('inv-511');
+    assert.equal(pay2.result.success, false);
+    assert.equal(pay2.result.reason, 'ALREADY_PAID');
+    assert.equal(engine.getState().treasuryBalance, initialTreasury - 418.0, 'Balance must not change on duplicate payment');
   });
 });

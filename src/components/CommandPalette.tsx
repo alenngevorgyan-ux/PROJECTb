@@ -27,9 +27,15 @@ export const CommandPalette: React.FC = () => {
     setShowTreasuryModal,
     setShowPRModal,
     resetDemo,
+    invoices,
   } = useWorld();
 
   const [query, setQuery] = useState('');
+
+  const inv511 = invoices.find((i) => i.id === 'inv-511');
+  const invSubtitle = inv511
+    ? `Acme Manufacturing · $${inv511.amount.toFixed(2)} payment authorization`
+    : 'Acme Manufacturing · Payment authorization';
 
   useEffect(() => {
     if (showCommandPalette) {
@@ -112,7 +118,7 @@ export const CommandPalette: React.FC = () => {
     {
       id: 'act-treasury',
       title: 'Review Treasury & Invoice #511',
-      subtitle: 'Acme Manufacturing · $418.00 revised payment authorization',
+      subtitle: invSubtitle,
       category: 'Finance & Treasury',
       action: () => {
         setShowCommandPalette(false);

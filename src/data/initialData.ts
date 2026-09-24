@@ -175,7 +175,7 @@ export const MY_COMPANY_ROOMS: Room[] = [
     id: 'server-room',
     companyId: 'my-company',
     name: 'Server Room',
-    description: 'Chilled datacenter room with glowing fiber racks, cooling fans, and primary ledger node.',
+    description: 'Chilled datacenter room with glowing fiber racks, cooling fans, and simulated demo node.',
     bounds: { x: 7, y: 11, width: 6, height: 3 },
     color: '#0f766e',
     iconName: 'Server',
@@ -402,7 +402,7 @@ export const INITIAL_INVOICES: Invoice[] = [
     invoiceNumber: '#511',
     vendorName: 'Acme Manufacturing',
     vendorId: 'acme-manufacturing',
-    amount: 418.0,
+    amount: 818.0,
     date: '2026-09-24',
     dueDate: '2026-10-01',
     status: 'PENDING_APPROVAL',
@@ -410,7 +410,6 @@ export const INITIAL_INVOICES: Invoice[] = [
     requiresFounderApproval: true,
     items: [
       { description: 'Precision CNC Aluminum Chassis Units (Batch 1)', quantity: 2, unitPrice: 409.0 },
-      { description: 'Customs Delay Service Credit (Agreed via Email Rail)', quantity: 1, unitPrice: -400.0 },
     ],
   },
 ];

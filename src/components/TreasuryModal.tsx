@@ -204,7 +204,7 @@ export const TreasuryModal: React.FC = () => {
             ) : (
               <div className="px-4 py-1.5 bg-emerald-950 text-emerald-300 rounded text-xs font-semibold flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span>Simulated payment approved ($418.00)</span>
+                <span>Simulated payment approved ({invoice ? `$${invoice.amount.toFixed(2)}` : 'PAID'})</span>
               </div>
             )}
           </div>

@@ -184,3 +184,12 @@ export interface IdentityProfile {
 }
 
 export type ViewLocation = 'CITY' | 'MY_COMPANY' | 'NORTHSTAR' | 'ACME' | 'CLOUDWORKS';
+
+export interface SupplierCreditResult {
+  success: boolean;
+  reason?: 'INVOICE_NOT_FOUND' | 'CREDIT_ALREADY_APPLIED' | 'INVOICE_ALREADY_PAID';
+  invoiceId: string;
+  previousAmount?: number;
+  newAmount?: number;
+  creditApplied?: number;
+}

@@ -59,7 +59,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     setShowTreasuryModal,
     setShowEmailThreadModal,
     setShowDesignReviewModal,
+    activeWorkflows,
   } = useWorld();
+
+  const mayaWorkflow = activeWorkflows.MAYA_ACME_SHIPMENT;
+  const isSupplierInquirySent = mayaWorkflow !== undefined && mayaWorkflow.currentStep >= 2;
+  const isSupplierResponseAvailable =
+    mayaWorkflow !== undefined &&
+    (mayaWorkflow.currentStep >= 3 || mayaWorkflow.status === 'COMPLETED');
 
   const tabs: { id: TabType; label: string; icon: any }[] = [
     { id: 'WORLD', label: 'WORLD', icon: Globe },
@@ -172,7 +179,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 <span className="text-[10px] text-emerald-400 font-mono">100% ONLINE</span>
               </div>
               <p className="text-[11px] text-slate-400 mt-1">
-                7 active rooms · 4 autonomous agents on site · 1 external EDI rail linked.
+                7 active rooms · 4 autonomous agents on site · 1 external supplier rail (simulated).
               </p>
             </div>
 
@@ -187,7 +194,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 { name: 'Procurement', role: 'Maya (AI Procurement) · Customs hold', id: 'procurement' },
                 { name: 'Finance', role: 'Treasury vault ($128.4K) & Invoice #511', id: 'finance' },
                 { name: 'Meeting Room', role: 'Shared conference hub & board table', id: 'meeting-room' },
-                { name: 'Server Room', role: 'Primary ledger node & container runtime', id: 'server-room' },
+                { name: 'Server Room', role: 'Demo runtime node & simulated ledger', id: 'server-room' },
               ].map((r) => (
                 <button
                   key={r.id}
@@ -367,8 +374,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
               {
                 name: 'Northstar Design',
                 rel: 'VERIFIED PARTNER',
-                desc: 'Native token syncing, mutual shared rooms, real-time avatar collaboration.',
-                rail: 'NATIVE API',
+                desc: 'Simulated native collaboration rail, mutual shared rooms, and shared design tokens.',
+                rail: 'SIMULATED API RAIL',
               },
               {
                 name: 'Acme Manufacturing',
@@ -379,8 +386,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
               {
                 name: 'CloudWorks',
                 rel: 'ENTERPRISE CLOUD VENDOR',
-                desc: 'Verified identity-authenticated cluster hosting & entitlement checks.',
-                rail: 'NATIVE API',
+                desc: 'Demo entitlement system & verified simulation checks.',
+                rail: 'SIMULATED API RAIL',
               },
             ].map((r, idx) => (
               <div
@@ -439,22 +446,43 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
               Asynchronous Rail Messages
             </div>
-            <div
-              onClick={() => setShowEmailThreadModal(true)}
-              className="p-3 bg-slate-950/60 hover:bg-slate-800/60 border border-slate-800 rounded-lg cursor-pointer transition-colors space-y-1"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white">Acme Manufacturing</span>
-                <span className="text-[10px] font-mono text-amber-400">EMAIL RAIL</span>
+            {isSupplierResponseAvailable ? (
+              <div
+                onClick={() => setShowEmailThreadModal(true)}
+                className="p-3 bg-slate-950/60 hover:bg-slate-800/60 border border-slate-800 rounded-lg cursor-pointer transition-colors space-y-1"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white">Acme Manufacturing</span>
+                  <span className="text-[10px] font-mono text-amber-400">EMAIL RAIL</span>
+                </div>
+                <div className="text-xs text-sky-300 font-medium">
+                  Re: Inquiry: Chassis Shipment #511 Customs Hold
+                </div>
+                <p className="text-[11px] text-slate-400 truncate">
+                  “Shipment delayed at customs. New ETA: Friday. We can offer a $400 credit.”
+                </p>
+                <div className="text-[10px] text-slate-500 pt-1">Click to view full thread</div>
               </div>
-              <div className="text-xs text-sky-300 font-medium">
-                Re: Inquiry: Chassis Shipment #511 Customs Hold
+            ) : (
+              <div
+                onClick={() => setShowEmailThreadModal(true)}
+                className="p-3 bg-slate-950/60 hover:bg-slate-800/60 border border-slate-800/80 rounded-lg cursor-pointer transition-colors space-y-1"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white">Acme Manufacturing</span>
+                  <span className="text-[10px] font-mono text-slate-400">EMAIL RAIL</span>
+                </div>
+                <div className="text-xs text-slate-300 font-medium">
+                  PO #511 Shipment Exception
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  {isSupplierInquirySent
+                    ? 'Inquiry dispatched to vendor-support@acme-mfg.internal. Awaiting supplier reply...'
+                    : 'No supplier response received yet. Contact Maya in Procurement to initiate inquiry.'}
+                </p>
+                <div className="text-[10px] text-slate-500 pt-1">Click to view thread status</div>
               </div>
-              <p className="text-[11px] text-slate-400 truncate">
-                “Shipment delayed at customs. New ETA: Friday. We can offer a $400 credit.”
-              </p>
-              <div className="text-[10px] text-slate-500 pt-1">Click to view full thread</div>
-            </div>
+            )}
 
             <div
               onClick={() => setShowPRModal(true)}

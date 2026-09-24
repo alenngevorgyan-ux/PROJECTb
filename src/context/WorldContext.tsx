@@ -19,6 +19,7 @@ import {
   PaymentApprovalResult,
   MergePRResult,
   WorkflowStartResult,
+  SupplierCreditResult,
 } from '../types/world';
 import {
   INITIAL_CHARACTERS,
@@ -101,6 +102,7 @@ interface WorldContextType {
   approvePayment: (invoiceId: string) => PaymentApprovalResult;
   mergePullRequest: (prId: string) => MergePRResult;
   startMayaAcmeWorkflow: () => WorkflowStartResult;
+  acceptSupplierCredit: (invoiceId?: string, creditAmount?: number) => SupplierCreditResult;
   addRealityEvent: (event: Omit<RealityEvent, 'id' | 'timestamp'>) => void;
   resetDemo: () => void;
 }
@@ -434,6 +436,33 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     return result;
   }, []);
+
+  // -------------------------------------------------------------
+  // CANONICAL IDEMPOTENT SUPPLIER CREDIT ACCEPTANCE (VIA DEMO ENGINE)
+  // -------------------------------------------------------------
+  const acceptSupplierCredit = useCallback(
+    (invoiceId: string = 'inv-511', creditAmount: number = 400.0): SupplierCreditResult => {
+      const { result, eventCreated, nextState } = engineRef.current.acceptSupplierCredit(
+        invoiceId,
+        creditAmount
+      );
+      if (!result.success) {
+        return result;
+      }
+
+      soundFX.playActionComplete();
+      setInvoices(nextState.invoices);
+      if (eventCreated) {
+        setRealityEvents(nextState.realityEvents);
+      }
+
+      const completed = engineRef.current.completeWorkflow('MAYA_ACME_SHIPMENT');
+      setActiveWorkflows(completed.workflows);
+
+      return result;
+    },
+    []
+  );
 
   // -------------------------------------------------------------
   // DEMO 1: VITEK CALL FLOW & PIPELINE (DETERMINISTIC & PROTECTED)
@@ -1225,42 +1254,22 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setActiveDialogue(null);
         setShowEmailThreadModal(true);
       } else if (actionId === 'MAYA_ACCEPT_CREDIT') {
-        soundFX.playActionComplete();
-        // Update Invoice #511 in engine and React state
-        const nextState = engineRef.current.updateInvoice('inv-511', (inv) => ({
-          ...inv,
-          amount: 418.0,
-          items: [
-            { description: 'Precision CNC Aluminum Chassis Units (Batch 1)', quantity: 2, unitPrice: 409.0 },
-            { description: 'Customs Delay Courtesy Credit (Agreed via Email Rail Demo)', quantity: 1, unitPrice: -400.0 },
-          ],
-        }));
-        setInvoices(nextState.invoices);
-
-        addRealityEvent({
-          agentId: 'maya',
-          agentName: 'Maya',
-          worldAction: 'Maya accepted $400 courtesy credit for customs delay',
-          businessEvent: 'Revised Acme Invoice #511 down to $418.00; pending founder signature',
-          category: 'FINANCE',
-        });
-
-        const completed = engineRef.current.completeWorkflow('MAYA_ACME_SHIPMENT');
-        setActiveWorkflows(completed.workflows);
-
-        setActiveDialogue({
-          characterId: 'maya',
-          stage: 'MAYA_CREDIT_ACCEPTED',
-          speaker: 'Maya',
-          speakerRole: 'AI Procurement Lead',
-          avatarColor: '#10b981',
-          message:
-            'Credit accepted and applied to Invoice #511. Revised total: $418.00.\n\nReady for Treasury authorization in Finance.',
-          options: [
-            { label: 'OPEN TREASURY & PAY $418', actionId: 'OPEN_TREASURY_MODAL', primary: true },
-            { label: 'DISMISS', actionId: 'DISMISS_DIALOGUE' },
-          ],
-        });
+        const creditRes = acceptSupplierCredit('inv-511', 400.0);
+        if (creditRes.success || creditRes.reason === 'CREDIT_ALREADY_APPLIED') {
+          setActiveDialogue({
+            characterId: 'maya',
+            stage: 'MAYA_CREDIT_ACCEPTED',
+            speaker: 'Maya',
+            speakerRole: 'AI Procurement Lead',
+            avatarColor: '#10b981',
+            message:
+              'Credit accepted and applied to Invoice #511. Revised total: $418.00.\n\nReady for Treasury authorization in Finance.',
+            options: [
+              { label: 'OPEN TREASURY & PAY $418', actionId: 'OPEN_TREASURY_MODAL', primary: true },
+              { label: 'DISMISS', actionId: 'DISMISS_DIALOGUE' },
+            ],
+          });
+        }
       }
 
       // NORTHSTAR ACTIONS
@@ -1455,6 +1464,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         approvePayment,
         mergePullRequest,
         startMayaAcmeWorkflow,
+        acceptSupplierCredit,
         addRealityEvent,
         resetDemo,
       }}
