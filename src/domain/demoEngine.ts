@@ -268,10 +268,10 @@ export function executeUpdateWorkflowStep(
 export function executeCompleteWorkflow(
   state: DemoWorldState,
   type: WorkflowType,
-  runId: string
+  runId?: string
 ): DemoWorldState {
   const current = state.workflows[type];
-  if (!current || current.runId !== runId) {
+  if (!current || (runId && current.runId !== runId)) {
     return state;
   }
 
@@ -286,3 +286,97 @@ export function executeCompleteWorkflow(
     },
   };
 }
+
+/**
+ * Synchronous authoritative engine for demo actions.
+ * Guarantees atomicity and idempotency even during same-tick / same-render duplicate invocations.
+ */
+export class DemoEngine {
+  private state: DemoWorldState;
+
+  constructor(initialState?: DemoWorldState) {
+    this.state = initialState ? JSON.parse(JSON.stringify(initialState)) : createInitialDemoState();
+  }
+
+  public getState(): Readonly<DemoWorldState> {
+    return this.state;
+  }
+
+  public approvePayment(invoiceId: string): {
+    result: PaymentApprovalResult;
+    eventCreated?: RealityEvent;
+    nextState: DemoWorldState;
+  } {
+    const res = executeApprovePayment(this.state, invoiceId);
+    if (res.result.success) {
+      this.state = res.nextState;
+    }
+    return { ...res, nextState: this.state };
+  }
+
+  public mergePullRequest(prId: string): {
+    result: MergePRResult;
+    eventCreated?: RealityEvent;
+    nextState: DemoWorldState;
+  } {
+    const res = executeMergePullRequest(this.state, prId);
+    if (res.result.success) {
+      this.state = res.nextState;
+    }
+    return { ...res, nextState: this.state };
+  }
+
+  public startWorkflow(
+    type: WorkflowType,
+    totalSteps: number,
+    initialLabel: string
+  ): { result: WorkflowStartResult; nextState: DemoWorldState } {
+    const res = executeStartWorkflow(this.state, type, totalSteps, initialLabel);
+    if (res.result.started) {
+      this.state = res.nextState;
+    }
+    return { ...res, nextState: this.state };
+  }
+
+  public updateWorkflowStep(
+    type: WorkflowType,
+    runId: string,
+    step: number,
+    stepLabel: string,
+    status: 'RUNNING' | 'WAITING_INPUT' | 'COMPLETED'
+  ): DemoWorldState {
+    this.state = executeUpdateWorkflowStep(this.state, type, runId, step, stepLabel, status);
+    return this.state;
+  }
+
+  public completeWorkflow(type: WorkflowType, runId?: string): DemoWorldState {
+    this.state = executeCompleteWorkflow(this.state, type, runId);
+    return this.state;
+  }
+
+  public updateInvoice(invoiceId: string, updater: (inv: Invoice) => Invoice): DemoWorldState {
+    this.state = {
+      ...this.state,
+      invoices: this.state.invoices.map((inv) => (inv.id === invoiceId ? updater(inv) : inv)),
+    };
+    return this.state;
+  }
+
+  public addRealityEvent(event: RealityEvent): DemoWorldState {
+    this.state = {
+      ...this.state,
+      realityEvents: [event, ...this.state.realityEvents.slice(0, 40)],
+    };
+    return this.state;
+  }
+
+  public reset(): DemoWorldState {
+    this.state = createInitialDemoState();
+    return this.state;
+  }
+}
+
+export function createDemoEngine(initialState?: DemoWorldState): DemoEngine {
+  return new DemoEngine(initialState);
+}
+

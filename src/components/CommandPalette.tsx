@@ -79,7 +79,7 @@ export const CommandPalette: React.FC = () => {
     {
       id: 'room-finance',
       title: 'Finance & Treasury Vault',
-      subtitle: 'My Company · Live balance, spending rules & pending invoices',
+      subtitle: 'My Company · Simulated balance, spending rules & pending invoices',
       category: 'Rooms & Locations',
       action: () => {
         teleportToOrganization('my-company');

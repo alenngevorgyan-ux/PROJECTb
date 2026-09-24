@@ -18,6 +18,7 @@ import {
   ActiveWorkflowInfo,
   PaymentApprovalResult,
   MergePRResult,
+  WorkflowStartResult,
 } from '../types/world';
 import {
   INITIAL_CHARACTERS,
@@ -33,7 +34,7 @@ import {
   INITIAL_REALITY_EVENTS,
 } from '../data/initialData';
 import { soundFX } from '../audio/soundFx';
-import { createInitialDemoState, createSimulatedRealityEvent } from '../domain/demoEngine';
+import { createDemoEngine, createSimulatedRealityEvent, DemoEngine } from '../domain/demoEngine';
 
 interface ActiveDialogue {
   characterId: string;
@@ -99,6 +100,7 @@ interface WorldContextType {
   movePlayerTo: (x: number, y: number) => void;
   approvePayment: (invoiceId: string) => PaymentApprovalResult;
   mergePullRequest: (prId: string) => MergePRResult;
+  startMayaAcmeWorkflow: () => WorkflowStartResult;
   addRealityEvent: (event: Omit<RealityEvent, 'id' | 'timestamp'>) => void;
   resetDemo: () => void;
 }
@@ -141,6 +143,9 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Track active timers and animation intervals for clean cancellations
   const timersRef = useRef<Set<any>>(new Set());
   const agentAnimationIntervalsRef = useRef<Record<string, any>>({});
+
+  // Synchronous authoritative engine ensuring atomic actions and race protection
+  const engineRef = useRef<DemoEngine>(createDemoEngine());
 
   const safeSetTimeout = useCallback((fn: () => void, ms: number) => {
     const timer = setTimeout(() => {
@@ -186,18 +191,19 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Helper to add events
+  // Helper to add events (keeps engine and UI in sync)
   const addRealityEvent = useCallback((event: Omit<RealityEvent, 'id' | 'timestamp'>) => {
     const newEvt = createSimulatedRealityEvent(event);
-    setRealityEvents((prev) => [newEvt, ...prev.slice(0, 40)]);
+    engineRef.current.addRealityEvent(newEvt);
+    setRealityEvents(engineRef.current.getState().realityEvents);
   }, []);
 
-  // Check if workflow is already running
+  // Check if workflow is already running (authoritative synchronous read)
   const isWorkflowRunning = useCallback(
     (type: WorkflowType) => {
-      return activeWorkflows[type]?.status === 'RUNNING';
+      return engineRef.current.getState().workflows[type]?.status === 'RUNNING';
     },
-    [activeWorkflows]
+    []
   );
 
   // Rooms for current view
@@ -393,100 +399,41 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   );
 
   // -------------------------------------------------------------
-  // CANONICAL IDEMPOTENT PR MERGE
+  // CANONICAL IDEMPOTENT PR MERGE (ATOMIC VIA DEMO ENGINE)
   // -------------------------------------------------------------
-  const mergePullRequest = useCallback(
-    (prId: string): MergePRResult => {
-      const pr = pullRequests.find((p) => p.id === prId);
-      if (!pr) {
-        return { success: false, reason: 'PR_NOT_FOUND', prId };
-      }
-      if (pr.status === 'MERGED') {
-        // Idempotent: already merged, do nothing
-        return { success: false, reason: 'ALREADY_MERGED', prId };
-      }
+  const mergePullRequest = useCallback((prId: string): MergePRResult => {
+    const { result, eventCreated, nextState } = engineRef.current.mergePullRequest(prId);
+    if (!result.success) {
+      return result;
+    }
 
-      soundFX.playActionComplete();
-      setPullRequests((prev) =>
-        prev.map((p) => (p.id === prId ? { ...p, status: 'MERGED' as const } : p))
-      );
+    soundFX.playActionComplete();
+    setPullRequests(nextState.pullRequests);
+    if (eventCreated) {
+      setRealityEvents(nextState.realityEvents);
+    }
 
-      const event = createSimulatedRealityEvent({
-        agentId: 'founder',
-        agentName: 'Alex Founder',
-        worldAction: `Founder merged PR #${pr.number} in demo repository`,
-        businessEvent: 'Simulated CI build and deployment completed successfully (commit #a7f920b)',
-        category: 'DEV',
-        relatedEntityId: prId,
-      });
-
-      setRealityEvents((prev) => [event, ...prev.slice(0, 40)]);
-
-      return { success: true, prId };
-    },
-    [pullRequests]
-  );
+    return result;
+  }, []);
 
   // -------------------------------------------------------------
-  // CANONICAL IDEMPOTENT PAYMENT APPROVAL
+  // CANONICAL IDEMPOTENT PAYMENT APPROVAL (ATOMIC VIA DEMO ENGINE)
   // -------------------------------------------------------------
-  const approvePayment = useCallback(
-    (invoiceId: string): PaymentApprovalResult => {
-      const invoice = invoices.find((i) => i.id === invoiceId);
-      if (!invoice) {
-        return {
-          success: false,
-          reason: 'INVOICE_NOT_FOUND',
-          balance: treasuryBalance,
-          invoiceId,
-        };
-      }
+  const approvePayment = useCallback((invoiceId: string): PaymentApprovalResult => {
+    const { result, eventCreated, nextState } = engineRef.current.approvePayment(invoiceId);
+    if (!result.success) {
+      return result;
+    }
 
-      if (invoice.status === 'PAID') {
-        // Idempotent: already paid, do nothing
-        return {
-          success: false,
-          reason: 'ALREADY_PAID',
-          balance: treasuryBalance,
-          invoiceId,
-        };
-      }
+    soundFX.playPaymentTransfer();
+    setTreasuryBalance(nextState.treasuryBalance);
+    setInvoices(nextState.invoices);
+    if (eventCreated) {
+      setRealityEvents(nextState.realityEvents);
+    }
 
-      if (treasuryBalance < invoice.amount) {
-        return {
-          success: false,
-          reason: 'TREASURY_INSUFFICIENT',
-          balance: treasuryBalance,
-          invoiceId,
-        };
-      }
-
-      soundFX.playPaymentTransfer();
-      const newBalance = Math.round((treasuryBalance - invoice.amount) * 100) / 100;
-      setTreasuryBalance(newBalance);
-      setInvoices((prev) =>
-        prev.map((i) => (i.id === invoiceId ? { ...i, status: 'PAID' as const } : i))
-      );
-
-      const event = createSimulatedRealityEvent({
-        agentId: 'founder',
-        agentName: 'Alex Founder',
-        worldAction: `Founder approved simulated payment for ${invoice.vendorName} ${invoice.invoiceNumber} ($${invoice.amount.toFixed(2)})`,
-        businessEvent: `Demo approval credential #8842 authorized simulated payment from Treasury balance (New balance: $${newBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })})`,
-        category: 'FINANCE',
-        relatedEntityId: invoiceId,
-      });
-
-      setRealityEvents((prev) => [event, ...prev.slice(0, 40)]);
-
-      return {
-        success: true,
-        balance: newBalance,
-        invoiceId,
-      };
-    },
-    [invoices, treasuryBalance]
-  );
+    return result;
+  }, []);
 
   // -------------------------------------------------------------
   // DEMO 1: VITEK CALL FLOW & PIPELINE (DETERMINISTIC & PROTECTED)
@@ -564,25 +511,16 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [addRealityEvent, animateAgentWalk]);
 
   const runVitekEngineeringPipeline = useCallback(() => {
-    // Prevent duplicate workflow run
-    if (activeWorkflows.VITEK_ONBOARDING_FIX?.status === 'RUNNING') {
-      return;
+    const { result, nextState } = engineRef.current.startWorkflow(
+      'VITEK_ONBOARDING_FIX',
+      5,
+      'ANALYZING REPOSITORY'
+    );
+    if (!result.started) {
+      return result;
     }
 
-    const runId = `vitek-onboarding-${Date.now()}`;
-    setActiveWorkflows((prev) => ({
-      ...prev,
-      VITEK_ONBOARDING_FIX: {
-        runId,
-        type: 'VITEK_ONBOARDING_FIX',
-        status: 'RUNNING',
-        currentStep: 1,
-        totalSteps: 5,
-        stepLabel: 'ANALYZING REPOSITORY',
-        startedAt: Date.now(),
-      },
-    }));
-
+    setActiveWorkflows(nextState.workflows);
     setActiveDialogue(null);
     soundFX.playFootstep();
 
@@ -609,12 +547,8 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const advanceStage = () => {
         if (currentStageIdx >= stages.length) {
           soundFX.playActionComplete();
-          setActiveWorkflows((prev) => ({
-            ...prev,
-            VITEK_ONBOARDING_FIX: prev.VITEK_ONBOARDING_FIX
-              ? { ...prev.VITEK_ONBOARDING_FIX, status: 'COMPLETED', stepLabel: 'PR #184 Ready' }
-              : undefined,
-          }));
+          const completedState = engineRef.current.completeWorkflow('VITEK_ONBOARDING_FIX', result.runId!);
+          setActiveWorkflows(completedState.workflows);
 
           setCharacters((prev) =>
             prev.map((c) =>
@@ -665,12 +599,14 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const stage = stages[currentStageIdx];
         soundFX.playTerminalBeep();
 
-        setActiveWorkflows((prev) => ({
-          ...prev,
-          VITEK_ONBOARDING_FIX: prev.VITEK_ONBOARDING_FIX
-            ? { ...prev.VITEK_ONBOARDING_FIX, currentStep: currentStageIdx + 1, stepLabel: stage.label }
-            : undefined,
-        }));
+        const updatedState = engineRef.current.updateWorkflowStep(
+          'VITEK_ONBOARDING_FIX',
+          result.runId!,
+          currentStageIdx + 1,
+          stage.label,
+          'RUNNING'
+        );
+        setActiveWorkflows(updatedState.workflows);
 
         setCharacters((prev) =>
           prev.map((c) =>
@@ -698,31 +634,24 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       advanceStage();
     });
-  }, [activeWorkflows.VITEK_ONBOARDING_FIX, animateAgentWalk, addRealityEvent, safeSetTimeout]);
+
+    return result;
+  }, [animateAgentWalk, addRealityEvent, safeSetTimeout]);
 
   // -------------------------------------------------------------
   // DEMO 2: MAYA EXTERNAL ACME SHIPMENT (DETERMINISTIC & PROTECTED)
   // -------------------------------------------------------------
-  const startMayaAcmeWorkflow = useCallback(() => {
-    // Prevent duplicate workflow run
-    if (activeWorkflows.MAYA_ACME_SHIPMENT?.status === 'RUNNING') {
-      return;
+  const startMayaAcmeWorkflow = useCallback((): WorkflowStartResult => {
+    const { result, nextState } = engineRef.current.startWorkflow(
+      'MAYA_ACME_SHIPMENT',
+      4,
+      'Preparing supplier inquiry'
+    );
+    if (!result.started) {
+      return result;
     }
 
-    const runId = `maya-acme-${Date.now()}`;
-    setActiveWorkflows((prev) => ({
-      ...prev,
-      MAYA_ACME_SHIPMENT: {
-        runId,
-        type: 'MAYA_ACME_SHIPMENT',
-        status: 'RUNNING',
-        currentStep: 1,
-        totalSteps: 4,
-        stepLabel: 'Preparing supplier inquiry',
-        startedAt: Date.now(),
-      },
-    }));
-
+    setActiveWorkflows(nextState.workflows);
     setActiveDialogue(null);
     soundFX.playChime();
 
@@ -767,12 +696,14 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           category: 'SUPPLY',
         });
 
-        setActiveWorkflows((prev) => ({
-          ...prev,
-          MAYA_ACME_SHIPMENT: prev.MAYA_ACME_SHIPMENT
-            ? { ...prev.MAYA_ACME_SHIPMENT, currentStep: 2, stepLabel: 'Awaiting supplier reply' }
-            : undefined,
-        }));
+        const step2 = engineRef.current.updateWorkflowStep(
+          'MAYA_ACME_SHIPMENT',
+          result.runId!,
+          2,
+          'Awaiting supplier reply',
+          'RUNNING'
+        );
+        setActiveWorkflows(step2.workflows);
 
         setCharacters((prev) =>
           prev.map((c) =>
@@ -797,12 +728,14 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             category: 'SUPPLY',
           });
 
-          setActiveWorkflows((prev) => ({
-            ...prev,
-            MAYA_ACME_SHIPMENT: prev.MAYA_ACME_SHIPMENT
-              ? { ...prev.MAYA_ACME_SHIPMENT, currentStep: 3, stepLabel: 'Acme credit received' }
-              : undefined,
-          }));
+          const step3 = engineRef.current.updateWorkflowStep(
+            'MAYA_ACME_SHIPMENT',
+            result.runId!,
+            3,
+            'Acme credit received',
+            'RUNNING'
+          );
+          setActiveWorkflows(step3.workflows);
 
           // Maya walks back to Founder office to report
           setCharacters((prev) =>
@@ -831,12 +764,14 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               )
             );
 
-            setActiveWorkflows((prev) => ({
-              ...prev,
-              MAYA_ACME_SHIPMENT: prev.MAYA_ACME_SHIPMENT
-                ? { ...prev.MAYA_ACME_SHIPMENT, status: 'WAITING_INPUT', stepLabel: 'Awaiting founder decision' }
-                : undefined,
-            }));
+            const waitingInput = engineRef.current.updateWorkflowStep(
+              'MAYA_ACME_SHIPMENT',
+              result.runId!,
+              3,
+              'Awaiting founder decision',
+              'WAITING_INPUT'
+            );
+            setActiveWorkflows(waitingInput.workflows);
 
             setActiveDialogue({
               characterId: 'maya',
@@ -856,30 +791,24 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }, 2800);
       }, 1400);
     });
-  }, [activeWorkflows.MAYA_ACME_SHIPMENT, animateAgentWalk, addRealityEvent, safeSetTimeout]);
+
+    return result;
+  }, [animateAgentWalk, addRealityEvent, safeSetTimeout]);
 
   // -------------------------------------------------------------
   // DEMO 3: NORTHSTAR CROSS-COMPANY COLLAB (DETERMINISTIC & PROTECTED)
   // -------------------------------------------------------------
-  const startNorthstarDesignCollab = useCallback(() => {
-    if (activeWorkflows.NOVA_DESIGN_COLLAB?.status === 'RUNNING') {
-      return;
+  const startNorthstarDesignCollab = useCallback((): WorkflowStartResult => {
+    const { result, nextState } = engineRef.current.startWorkflow(
+      'NOVA_DESIGN_COLLAB',
+      3,
+      'Collaborating on mobile onboarding tokens'
+    );
+    if (!result.started) {
+      return result;
     }
 
-    const runId = `northstar-collab-${Date.now()}`;
-    setActiveWorkflows((prev) => ({
-      ...prev,
-      NOVA_DESIGN_COLLAB: {
-        runId,
-        type: 'NOVA_DESIGN_COLLAB',
-        status: 'RUNNING',
-        currentStep: 1,
-        totalSteps: 3,
-        stepLabel: 'Collaborating on mobile onboarding tokens',
-        startedAt: Date.now(),
-      },
-    }));
-
+    setActiveWorkflows(nextState.workflows);
     setActiveDialogue(null);
     soundFX.playChime();
 
@@ -962,12 +891,14 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               category: 'DESIGN',
             });
 
-            setActiveWorkflows((prev) => ({
-              ...prev,
-              NOVA_DESIGN_COLLAB: prev.NOVA_DESIGN_COLLAB
-                ? { ...prev.NOVA_DESIGN_COLLAB, status: 'WAITING_INPUT', stepLabel: 'Design V2 Ready' }
-                : undefined,
-            }));
+            const waitingInput = engineRef.current.updateWorkflowStep(
+              'NOVA_DESIGN_COLLAB',
+              result.runId!,
+              3,
+              'Design V2 Ready',
+              'WAITING_INPUT'
+            );
+            setActiveWorkflows(waitingInput.workflows);
 
             setCharacters((prev) =>
               prev.map((c) => {
@@ -1000,7 +931,9 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }, 1800);
       }, 1400);
     }, 600);
-  }, [activeWorkflows.NOVA_DESIGN_COLLAB, addRealityEvent, safeSetTimeout]);
+
+    return result;
+  }, [addRealityEvent, safeSetTimeout]);
 
   // -------------------------------------------------------------
   // DEMO 4: CLOUDWORKS SUPPORT FLOW (DETERMINISTIC & PROTECTED)
@@ -1035,7 +968,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     clearAllTimers();
     soundFX.playChime();
 
-    const fresh = createInitialDemoState();
+    const fresh = engineRef.current.reset();
     setInvoices(fresh.invoices);
     setTreasuryBalance(fresh.treasuryBalance);
     setPullRequests(fresh.pullRequests);
@@ -1064,7 +997,8 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       category: 'GENERAL',
     });
 
-    setRealityEvents([resetEvt, ...fresh.realityEvents]);
+    engineRef.current.addRealityEvent(resetEvt);
+    setRealityEvents(engineRef.current.getState().realityEvents);
   }, [clearAllTimers]);
 
   // -------------------------------------------------------------
@@ -1292,21 +1226,17 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setShowEmailThreadModal(true);
       } else if (actionId === 'MAYA_ACCEPT_CREDIT') {
         soundFX.playActionComplete();
-        // Update Invoice #511
-        setInvoices((prev) =>
-          prev.map((inv) =>
-            inv.id === 'inv-511'
-              ? {
-                  ...inv,
-                  amount: 418.0,
-                  items: [
-                    { description: 'Precision CNC Aluminum Chassis Units (Batch 1)', quantity: 2, unitPrice: 409.0 },
-                    { description: 'Customs Delay Courtesy Credit (Agreed via Email Rail Demo)', quantity: 1, unitPrice: -400.0 },
-                  ],
-                }
-              : inv
-          )
-        );
+        // Update Invoice #511 in engine and React state
+        const nextState = engineRef.current.updateInvoice('inv-511', (inv) => ({
+          ...inv,
+          amount: 418.0,
+          items: [
+            { description: 'Precision CNC Aluminum Chassis Units (Batch 1)', quantity: 2, unitPrice: 409.0 },
+            { description: 'Customs Delay Courtesy Credit (Agreed via Email Rail Demo)', quantity: 1, unitPrice: -400.0 },
+          ],
+        }));
+        setInvoices(nextState.invoices);
+
         addRealityEvent({
           agentId: 'maya',
           agentName: 'Maya',
@@ -1314,12 +1244,10 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           businessEvent: 'Revised Acme Invoice #511 down to $418.00; pending founder signature',
           category: 'FINANCE',
         });
-        setActiveWorkflows((prev) => ({
-          ...prev,
-          MAYA_ACME_SHIPMENT: prev.MAYA_ACME_SHIPMENT
-            ? { ...prev.MAYA_ACME_SHIPMENT, status: 'COMPLETED', stepLabel: 'Credit accepted ($400)' }
-            : undefined,
-        }));
+
+        const completed = engineRef.current.completeWorkflow('MAYA_ACME_SHIPMENT');
+        setActiveWorkflows(completed.workflows);
+
         setActiveDialogue({
           characterId: 'maya',
           stage: 'MAYA_CREDIT_ACCEPTED',
@@ -1385,12 +1313,8 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           businessEvent: 'Exported Figma token bundle to Northstar and synced repo styling variables',
           category: 'DESIGN',
         });
-        setActiveWorkflows((prev) => ({
-          ...prev,
-          NOVA_DESIGN_COLLAB: prev.NOVA_DESIGN_COLLAB
-            ? { ...prev.NOVA_DESIGN_COLLAB, status: 'COMPLETED', stepLabel: 'Design V2 Approved' }
-            : undefined,
-        }));
+        const completed = engineRef.current.completeWorkflow('NOVA_DESIGN_COLLAB');
+        setActiveWorkflows(completed.workflows);
         setActiveDialogue(null);
       }
 
@@ -1530,6 +1454,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         movePlayerTo,
         approvePayment,
         mergePullRequest,
+        startMayaAcmeWorkflow,
         addRealityEvent,
         resetDemo,
       }}
