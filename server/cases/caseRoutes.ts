@@ -17,9 +17,9 @@ caseRouter.use(requireAuthenticatedUser);
 /**
  * GET /api/cases
  */
-caseRouter.get('/', (_req: AuthenticatedRequest, res: Response) => {
+caseRouter.get('/', async (_req: AuthenticatedRequest, res: Response) => {
   try {
-    const cases = caseService.getAllCases();
+    const cases = await caseService.getAllCases();
     res.json({ success: true, cases });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -29,9 +29,9 @@ caseRouter.get('/', (_req: AuthenticatedRequest, res: Response) => {
 /**
  * GET /api/cases/active
  */
-caseRouter.get('/active', (_req: AuthenticatedRequest, res: Response) => {
+caseRouter.get('/active', async (_req: AuthenticatedRequest, res: Response) => {
   try {
-    const activeCase = caseService.getActiveCase();
+    const activeCase = await caseService.getActiveCase();
     res.json({ success: true, case: activeCase });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -41,10 +41,10 @@ caseRouter.get('/active', (_req: AuthenticatedRequest, res: Response) => {
 /**
  * POST /api/cases/create
  */
-caseRouter.post('/create', (req: AuthenticatedRequest, res: Response) => {
+caseRouter.post('/create', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { poNumber, contactEmail, contactName, objective } = req.body;
-    const newCase = caseService.createSupplierCase({ poNumber, contactEmail, contactName, objective });
+    const newCase = await caseService.createSupplierCase({ poNumber, contactEmail, contactName, objective });
     res.json({ success: true, case: newCase });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -124,12 +124,12 @@ caseRouter.post('/:id/sync', async (req: AuthenticatedRequest, res: Response) =>
 /**
  * POST /api/cases/:id/resolve
  */
-caseRouter.post('/:id/resolve', (req: AuthenticatedRequest, res: Response) => {
+caseRouter.post('/:id/resolve', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const caseId = req.params.id;
     const { acceptedCredit, notes, securityReviewAcknowledged } = req.body;
 
-    const result = caseService.acceptCredit({
+    const result = await caseService.acceptCredit({
       caseId,
       approvedBy: req.userEmail!,
       acceptedCredit,
@@ -153,9 +153,9 @@ caseRouter.post('/:id/resolve', (req: AuthenticatedRequest, res: Response) => {
  * world reset on the frontend. Still gated behind requireAuthenticatedUser
  * above; intended for explicit, confirmed developer/test use only.
  */
-caseRouter.post('/reset', (_req: AuthenticatedRequest, res: Response) => {
+caseRouter.post('/reset', async (_req: AuthenticatedRequest, res: Response) => {
   try {
-    const resetCase = caseService.resetCases();
+    const resetCase = await caseService.resetCases();
     res.json({ success: true, case: resetCase });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

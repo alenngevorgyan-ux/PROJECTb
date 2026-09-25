@@ -7,3 +7,5 @@ coverage/
 .data/
 .env*
 !.env.example
+.vercel
+api/_app.mjs

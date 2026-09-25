@@ -37,6 +37,7 @@ import { parseSupplierReply, validateExtractedState } from '../server/ai/supplie
 import { generateSupplierDraft } from '../server/ai/supplierEmailDraft.ts';
 import { CaseRepository } from '../server/cases/caseRepository.ts';
 import { CaseService } from '../server/cases/caseService.ts';
+import { InMemorySendLock } from '../server/locks/inMemorySendLock.ts';
 import { GmailClient } from '../server/gmail/gmailClient.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -482,7 +483,7 @@ describe('AI boundary: email drafts never invent logistics context', () => {
 // ---------------------------------------------------------------------------
 
 describe('CaseRepository: deterministic active-case selection (N)', () => {
-  it('N. selects the most-recently-updated non-resolved case, never Map insertion order', () => {
+  it('N. selects the most-recently-updated non-resolved case, never Map insertion order', async () => {
     const repo = new CaseRepository({ filePath: null, autoSeed: false });
 
     const a = { ...freshCase({ id: 'case-test-A' }), updatedAt: '2026-01-01T00:00:00.000Z' };
@@ -497,33 +498,34 @@ describe('CaseRepository: deterministic active-case selection (N)', () => {
     (repo as any).cache.set(c.id, c);
     (repo as any).cache.set(b.id, b);
 
-    assert.equal(repo.getActiveCase().id, 'case-test-B', 'B has the latest updatedAt');
+    assert.equal((await repo.getActiveCase()).id, 'case-test-B', 'B has the latest updatedAt');
 
     // Resolve B — the next most recent non-resolved case must win.
     (repo as any).cache.set(b.id, { ...b, status: 'RESOLVED' });
-    assert.equal(repo.getActiveCase().id, 'case-test-C');
+    assert.equal((await repo.getActiveCase()).id, 'case-test-C');
 
     // Resolve everything — falls back to the most recently updated overall,
     // which is B (2026-01-03), even though every case is now terminal.
     (repo as any).cache.set(a.id, { ...a, status: 'RESOLVED' });
     (repo as any).cache.set(c.id, { ...c, status: 'RESOLVED' });
-    assert.equal(repo.getActiveCase().id, 'case-test-B', 'falls back to the most recently updated case overall');
+    assert.equal((await repo.getActiveCase()).id, 'case-test-B', 'falls back to the most recently updated case overall');
   });
 
-  it('autoSeed creates a default case only when the repository is truly empty', () => {
+  it('autoSeed creates a default case only when the repository is truly empty', async () => {
     const repo = new CaseRepository({ filePath: null, autoSeed: true });
-    const active = repo.getActiveCase();
+    const active = await repo.getActiveCase();
     assert.ok(active);
     assert.equal(active.status, 'DRAFT_READY');
   });
 
-  it('never touches the real .data/cases.json file used by the production singleton', () => {
+  it('never touches the real .data/cases.json file used by the production singleton', async () => {
     const prodPath = path.resolve(__dirname, '..', '.data', 'cases.json');
     const existedBefore = fs.existsSync(prodPath);
     const statBefore = existedBefore ? fs.statSync(prodPath).mtimeMs : null;
 
     const repo = new CaseRepository({ filePath: null, autoSeed: true });
-    repo.save({ ...repo.getActiveCase(), poNumber: '999' });
+    const active = await repo.getActiveCase();
+    await repo.save({ ...active, poNumber: '999' });
 
     const statAfter = fs.existsSync(prodPath) ? fs.statSync(prodPath).mtimeMs : null;
     assert.equal(statAfter, statBefore, 'the production cases.json file must be untouched by an in-memory repository');
@@ -548,10 +550,10 @@ afterEach(() => {
   (GmailClient as any).getThread = originalGetThread;
 });
 
-function makeService(seedCase?: Case) {
+async function makeService(seedCase?: Case) {
   const repo = new CaseRepository({ filePath: null, autoSeed: false });
-  if (seedCase) repo.save(seedCase);
-  const service = new CaseService(repo);
+  if (seedCase) await repo.save(seedCase);
+  const service = new CaseService(repo, new InMemorySendLock());
   return { repo, service };
 }
 
@@ -563,7 +565,7 @@ describe('CaseService: send concurrency and idempotency', () => {
       subject: 'PO #511',
       body: 'Please confirm ETA.',
     });
-    const { service, repo } = makeService(waiting);
+    const { service, repo } = await makeService(waiting);
 
     let sendCallCount = 0;
     (GmailClient as any).sendEmail = async () => {
@@ -588,7 +590,7 @@ describe('CaseService: send concurrency and idempotency', () => {
     assert.equal(successes.length, 1, 'exactly one of the two concurrent sends must succeed');
     assert.equal(failures.length, 1);
     assert.equal(sendCallCount, 1, 'Gmail sendEmail must be called exactly once');
-    assert.equal(repo.getById(waiting.id)?.status, 'WAITING_REPLY');
+    assert.equal((await repo.getById(waiting.id))?.status, 'WAITING_REPLY');
   });
 
   it('D. a sequential duplicate send after success is rejected without calling Gmail again', async () => {
@@ -598,7 +600,7 @@ describe('CaseService: send concurrency and idempotency', () => {
       subject: 'PO #511',
       body: 'Please confirm ETA.',
     });
-    const { service } = makeService(waiting);
+    const { service } = await makeService(waiting);
 
     let sendCallCount = 0;
     (GmailClient as any).sendEmail = async () => {
@@ -626,7 +628,7 @@ describe('CaseService: send concurrency and idempotency', () => {
 
   it('J. sending on a RESOLVED case is rejected', async () => {
     const resolvedCase = { ...freshCase(), status: 'RESOLVED' as const };
-    const { service } = makeService(resolvedCase);
+    const { service } = await makeService(resolvedCase);
 
     let sendCallCount = 0;
     (GmailClient as any).sendEmail = async () => {
@@ -656,7 +658,7 @@ describe('CaseService: authenticated identity and sender verification', () => {
       externalThreadId: 'thread-1',
       allowedCounterpartyEmails: ['kurt@acme.example'],
     };
-    const { service, repo } = makeService(sentCase);
+    const { service, repo } = await makeService(sentCase);
 
     (GmailClient as any).getProfile = async () => ({ emailAddress: 'ALEX@MYCOMPANY.EXAMPLE' });
     (GmailClient as any).getThread = async () => ({
@@ -680,7 +682,7 @@ describe('CaseService: authenticated identity and sender verification', () => {
     const result = await service.syncThreadReplies({ caseId: sentCase.id, accessToken: 'fake-token' });
     assert.equal(result.success, true);
     assert.equal(result.newRepliesCount, 1, 'the message matching the AUTHENTICATED mailbox must be excluded as self-sent');
-    const saved = repo.getById(sentCase.id)!;
+    const saved = (await repo.getById(sentCase.id))!;
     assert.equal(saved.messages.some((m) => m.externalMessageId === 'supplier-reply-1'), true);
     assert.equal(saved.messages.some((m) => m.externalMessageId === 'own-sent-message'), false);
   });
@@ -692,7 +694,7 @@ describe('CaseService: authenticated identity and sender verification', () => {
       externalThreadId: 'thread-1',
       allowedCounterpartyEmails: ['kurt@acme.example'],
     };
-    const { service, repo } = makeService(sentCase);
+    const { service, repo } = await makeService(sentCase);
 
     (GmailClient as any).getProfile = async () => ({ emailAddress: 'alex@mycompany.example' });
     (GmailClient as any).getThread = async () => ({
@@ -709,7 +711,7 @@ describe('CaseService: authenticated identity and sender verification', () => {
 
     const result = await service.syncThreadReplies({ caseId: sentCase.id, accessToken: 'fake-token' });
     assert.equal(result.success, true);
-    const saved = repo.getById(sentCase.id)!;
+    const saved = (await repo.getById(sentCase.id))!;
     assert.equal(saved.extractedState, undefined, 'unverified sender must never populate trusted extractedState');
     assert.equal(saved.needsSenderReview, true);
     assert.equal(saved.status, 'WAITING_REPLY', 'status must not advance from an unverified message');
@@ -722,7 +724,7 @@ describe('CaseService: authenticated identity and sender verification', () => {
       externalThreadId: 'thread-1',
       allowedCounterpartyEmails: ['kurt@acme.example'],
     };
-    const { service, repo } = makeService(sentCase);
+    const { service, repo } = await makeService(sentCase);
 
     (GmailClient as any).getProfile = async () => ({ emailAddress: 'alex@mycompany.example' });
     (GmailClient as any).getThread = async () => ({
@@ -739,14 +741,14 @@ describe('CaseService: authenticated identity and sender verification', () => {
 
     const result = await service.syncThreadReplies({ caseId: sentCase.id, accessToken: 'fake-token' });
     assert.equal(result.success, true);
-    const saved = repo.getById(sentCase.id)!;
+    const saved = (await repo.getById(sentCase.id))!;
     assert.equal(saved.status, 'SECURITY_REVIEW');
 
-    const blockedResolve = service.acceptCredit({ caseId: sentCase.id, approvedBy: 'alex@mycompany.example' });
+    const blockedResolve = await service.acceptCredit({ caseId: sentCase.id, approvedBy: 'alex@mycompany.example' });
     assert.equal(blockedResolve.success, false);
     assert.match(blockedResolve.reason || '', /SECURITY_REVIEW_REQUIRED/);
 
-    const ackResolve = service.acceptCredit({
+    const ackResolve = await service.acceptCredit({
       caseId: sentCase.id,
       approvedBy: 'alex@mycompany.example',
       securityReviewAcknowledged: true,
@@ -762,7 +764,7 @@ describe('CaseService: authenticated identity and sender verification', () => {
       externalThreadId: 'thread-1',
       allowedCounterpartyEmails: ['kurt@acme.example'],
     };
-    const { service } = makeService(sentCase);
+    const { service } = await makeService(sentCase);
 
     (GmailClient as any).getProfile = async () => ({ emailAddress: 'alex@mycompany.example' });
     (GmailClient as any).getThread = async () => ({

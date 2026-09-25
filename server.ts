@@ -33,7 +33,10 @@ export function createApp(): Express {
         // the browser itself enforces CORS only for cross-origin calls.
         if (!origin) return callback(null, true);
         if (serverConfig.allowedOrigins.includes(origin)) return callback(null, true);
-        callback(new Error(`Origin not allowed by CORS: ${origin}`));
+        // Reject cleanly (no CORS headers -> the browser blocks the
+        // response) rather than throwing, which would otherwise bubble up
+        // as an unhandled error and produce a generic 500.
+        callback(null, false);
       },
       credentials: true,
     })

@@ -13,7 +13,10 @@ import {
   transitionToUnverifiedSender,
   transitionToResolved,
 } from '../../src/domain/case/stateTransitions';
-import { caseRepository as defaultCaseRepository, CaseRepository } from './caseRepository';
+import { ICaseRepository } from './ICaseRepository';
+import { createCaseRepository } from './createCaseRepository';
+import { ISendLock } from '../locks/ISendLock';
+import { createSendLock } from '../locks/createSendLock';
 import { ActionPolicy } from '../policy/actionPolicy';
 import { generateSupplierDraft } from '../ai/supplierEmailDraft';
 import { parseSupplierReply } from '../ai/supplierReplyParser';
@@ -27,38 +30,32 @@ function extractEmailAddress(fromHeader: string): string {
 }
 
 export class CaseService {
-  private readonly repository: CaseRepository;
-  /**
-   * In-process send locks, keyed by caseId. Node.js executes this module's
-   * synchronous code to the first `await` without interleaving, so setting
-   * a lock before any await guarantees a second concurrent call to
-   * approveAndSend for the same Case observes the lock and is rejected
-   * before either request has sent anything.
-   */
-  private readonly sendingLocks: Set<string> = new Set();
+  private readonly repository: ICaseRepository;
+  private readonly sendLock: ISendLock;
 
-  constructor(repository: CaseRepository = defaultCaseRepository) {
+  constructor(repository: ICaseRepository = createCaseRepository(), sendLock: ISendLock = createSendLock()) {
     this.repository = repository;
+    this.sendLock = sendLock;
   }
 
-  public getActiveCase(): Case {
+  public async getActiveCase(): Promise<Case> {
     return this.repository.getActiveCase();
   }
 
-  public getAllCases(): Case[] {
+  public async getAllCases(): Promise<Case[]> {
     return this.repository.getAll();
   }
 
-  public getCaseById(id: string): Case | undefined {
+  public async getCaseById(id: string): Promise<Case | undefined> {
     return this.repository.getById(id);
   }
 
-  public createSupplierCase(params: {
+  public async createSupplierCase(params: {
     poNumber?: string;
     contactEmail?: string;
     contactName?: string;
     objective?: string;
-  }): Case {
+  }): Promise<Case> {
     const newCase = createInitialSupplierCase({
       poNumber: params.poNumber || '511',
       contactEmail: params.contactEmail,
@@ -79,7 +76,7 @@ export class CaseService {
     caseId: string,
     params?: { recipient?: string; subject?: string; body?: string }
   ): Promise<Case> {
-    const currentCase = this.repository.getById(caseId) || this.repository.getActiveCase();
+    const currentCase = (await this.repository.getById(caseId)) || (await this.repository.getActiveCase());
 
     let draftContent: CaseDraft;
     if (params?.subject && params?.body && params?.recipient) {
@@ -114,8 +111,10 @@ export class CaseService {
   /**
    * Records a human approval bound to the exact draft content, then sends
    * the real outbound email via Gmail. Protected by:
-   *  - an in-process send lock so two concurrent requests for the same
-   *    Case cannot both proceed to a Gmail send;
+   *  - a send lock so two concurrent requests for the same Case cannot
+   *    both proceed to a Gmail send (in-process Set locally, distributed
+   *    Redis lock on the serverless/Vercel deployment target — see
+   *    server/locks/createSendLock.ts);
    *  - a persisted, content-bound approval (recordDraftApproval /
    *    transitionToSent) instead of a blind boolean policy check;
    *  - the existing SENT/WAITING_REPLY idempotency guard for sequential
@@ -131,16 +130,16 @@ export class CaseService {
   }): Promise<{ success: boolean; case: Case; reason?: string }> {
     const { caseId, accessToken, approvedBy, recipient, subject, body } = params;
 
-    if (this.sendingLocks.has(caseId)) {
-      const existing = this.repository.getById(caseId) || this.repository.getActiveCase();
+    const acquired = await this.sendLock.acquire(caseId);
+    if (!acquired) {
+      const existing = (await this.repository.getById(caseId)) || (await this.repository.getActiveCase());
       return { success: false, case: existing, reason: 'SEND_IN_PROGRESS: another send request for this Case is already running.' };
     }
-    this.sendingLocks.add(caseId);
 
     try {
-      const currentCase = this.repository.getById(caseId);
+      const currentCase = await this.repository.getById(caseId);
       if (!currentCase) {
-        return { success: false, case: this.repository.getActiveCase(), reason: 'CASE_NOT_FOUND' };
+        return { success: false, case: await this.repository.getActiveCase(), reason: 'CASE_NOT_FOUND' };
       }
 
       // Strict Recipient Safety Check: forbid sending to demo dummy domains
@@ -154,7 +153,7 @@ export class CaseService {
 
       // Fast idempotency path: no need to touch Gmail at all for a case
       // that has already sent (covers a sequential duplicate request
-      // arriving after the in-process lock above has already cleared).
+      // arriving after the lock above has already cleared).
       if (currentCase.status === 'SENT' || currentCase.status === 'WAITING_REPLY') {
         return { success: false, case: currentCase, reason: 'EMAIL_ALREADY_SENT' };
       }
@@ -164,7 +163,7 @@ export class CaseService {
       if (!approvalResult.success) {
         return { success: false, case: currentCase, reason: approvalResult.reason };
       }
-      const approvedCase = this.repository.save(approvalResult.nextCase);
+      const approvedCase = await this.repository.save(approvalResult.nextCase);
 
       // 2. Deterministic policy gate: the ONLY thing that can make this
       // `true` is a persisted, content-bound approval — never a hardcoded
@@ -211,10 +210,10 @@ export class CaseService {
         return { success: false, case: approvedCase, reason: transition.reason };
       }
 
-      const saved = this.repository.save(transition.nextCase);
+      const saved = await this.repository.save(transition.nextCase);
       return { success: true, case: saved };
     } finally {
-      this.sendingLocks.delete(caseId);
+      await this.sendLock.release(caseId);
     }
   }
 
@@ -238,9 +237,9 @@ export class CaseService {
   }> {
     const { caseId, accessToken } = params;
 
-    const currentCase = this.repository.getById(caseId);
+    const currentCase = await this.repository.getById(caseId);
     if (!currentCase) {
-      return { success: false, case: this.repository.getActiveCase(), newRepliesCount: 0, reason: 'CASE_NOT_FOUND' };
+      return { success: false, case: await this.repository.getActiveCase(), newRepliesCount: 0, reason: 'CASE_NOT_FOUND' };
     }
 
     if (!currentCase.externalThreadId) {
@@ -326,7 +325,7 @@ export class CaseService {
       if (res.success) workingCase = res.nextCase;
     }
 
-    const saved = this.repository.save(workingCase);
+    const saved = await this.repository.save(workingCase);
     return { success: true, case: saved, newRepliesCount: newMessages.length };
   }
 
@@ -336,18 +335,18 @@ export class CaseService {
    * details) refuses to resolve unless the caller explicitly acknowledges
    * the review — see transitionToResolved.
    */
-  public acceptCredit(params: {
+  public async acceptCredit(params: {
     caseId: string;
     approvedBy: string;
     acceptedCredit?: number;
     notes?: string;
     securityReviewAcknowledged?: boolean;
-  }): { success: boolean; case: Case; reason?: string } {
+  }): Promise<{ success: boolean; case: Case; reason?: string }> {
     const { caseId, approvedBy, acceptedCredit, notes, securityReviewAcknowledged } = params;
 
-    const currentCase = this.repository.getById(caseId);
+    const currentCase = await this.repository.getById(caseId);
     if (!currentCase) {
-      return { success: false, case: this.repository.getActiveCase(), reason: 'CASE_NOT_FOUND' };
+      return { success: false, case: await this.repository.getActiveCase(), reason: 'CASE_NOT_FOUND' };
     }
 
     const policy = ActionPolicy.canAcceptCredit(true);
@@ -360,7 +359,7 @@ export class CaseService {
       return { success: false, case: currentCase, reason: res.reason };
     }
 
-    const saved = this.repository.save(res.nextCase);
+    const saved = await this.repository.save(res.nextCase);
     return { success: true, case: saved };
   }
 
@@ -371,7 +370,7 @@ export class CaseService {
    * must never call this and must never delete real Case data. Intended
    * only for explicit, confirmed developer/test use.
    */
-  public resetCases(): Case {
+  public async resetCases(): Promise<Case> {
     return this.repository.reset();
   }
 }

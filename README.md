@@ -54,12 +54,13 @@ not enterprise production readiness. See "Known limitations" below.
    subject, body, and `draftVersion` of the case at the moment of approval. Editing the
    draft afterward (`transitionToWaitingApproval`) clears the pending approval — an
    approval can never be reused against changed content.
-2. **Send idempotency.** `CaseService` holds an in-process, per-Case send lock
-   (a `Set<string>` acquired synchronously, before any `await`) so two concurrent
-   `approve & send` requests for the same Case cannot both reach the Gmail API. A
-   sequential duplicate request after the Case is `WAITING_REPLY`/`SENT` is rejected
-   immediately without calling Gmail again. This is a single-process guarantee — see
-   limitations below.
+2. **Send idempotency.** `CaseService` acquires a per-Case send lock (`server/locks/`)
+   before doing anything else, so two concurrent `approve & send` requests for the same
+   Case cannot both reach the Gmail API. Locally / on a traditional long-running host this
+   is an in-process `Set` (`InMemorySendLock`); on Vercel it's a real distributed lock via
+   Redis's atomic `SET NX` (`RedisSendLock`) — see "Deploying to Vercel" below for why the
+   in-process version alone isn't enough there. A sequential duplicate request after the
+   Case is `WAITING_REPLY`/`SENT` is rejected immediately without calling Gmail again.
 3. **No invented facts.** `server/ai/supplierReplyParser.ts`'s offline fallback extracts
    only literal, verbatim text around known keywords (e.g. a day-of-week, "customs") — it
    never fabricates a specific time, cause, or document. `server/ai/supplierEmailDraft.ts`'s
@@ -117,6 +118,60 @@ npm start                # NODE_ENV=production tsx server.ts, serves dist/ + API
 `node server.ts` — this project's `server.ts` uses ESM `import.meta` and top-level types
 that plain Node cannot execute without a loader, so `npm ci` must install devDependencies
 in the deployment image (the default; don't pass `--omit=dev`).
+
+## Deploying to Vercel
+
+This app also deploys to Vercel as a serverless project: `vercel.json` builds the Vite
+frontend as static output and rewrites `/api/*` to a single Node function
+(`api/index.mjs`) that wraps the exact same Express app used by `npm start` — same routes,
+same auth middleware, same CORS config.
+
+**Why persistence and locking are pluggable.** A serverless function has no persistent
+filesystem and no memory shared across instances, so the file-backed `CaseRepository` and
+the in-process `Set`-based send lock (correct for `npm start` on a long-running host) don't
+work there. `server/cases/createCaseRepository.ts` and `server/locks/createSendLock.ts`
+pick the right implementation automatically based on whether a Redis store is configured
+(`serverConfig.useRedis`):
+
+- **Not configured** (no Redis env vars): file-backed persistence + an in-process lock —
+  this is what local dev, `npm start`, and the test suite always use.
+- **Configured**: `VercelKvCaseRepository` (Case data as JSON in Redis, `server/cases/kvCaseRepository.ts`)
+  + `RedisSendLock` (a real distributed lock via Redis's atomic `SET NX`,
+  `server/locks/redisSendLock.ts`) — required for send-idempotency and Case persistence to
+  actually work correctly across Vercel's concurrent, ephemeral function instances.
+
+**Why the API is pre-bundled.** Vercel's Node builder transpiles `.ts` function files
+per-file via `tsc` without rewriting this project's extensionless relative imports, and
+plain Node's ESM loader (unlike `tsx`) does no extension inference — so a naively deployed
+`api/index.ts` fails at runtime (`../server` is ambiguous with the `server/` directory and
+throws `ERR_UNSUPPORTED_DIR_IMPORT`). `npm run build:api` uses `esbuild` (already a
+dependency) to bundle `server.ts` and its whole local module graph into a single
+`api/_app.mjs` ahead of time — esbuild resolves extensions/directories correctly, so only
+real npm package imports (express, cors, `@upstash/redis`, etc.) are left for Node to
+resolve normally from `node_modules` at runtime. `vercel.json`'s `buildCommand` runs both
+`npm run build` and `npm run build:api`. `api/_app.mjs` is a gitignored build artifact,
+regenerated on every deploy — never hand-edit it.
+
+**Setup steps:**
+
+1. `vercel deploy` (or connect the GitHub repo in the Vercel dashboard) — the CLI will
+   detect `vercel.json` and deploy. `vercel deploy --prod` promotes to the production
+   domain (preview deployments are gated behind Vercel's own SSO by default).
+2. Add a Redis store: Vercel dashboard → Storage → Marketplace → a Redis integration
+   (Upstash). This auto-injects `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` (or the
+   legacy `KV_REST_API_URL`/`KV_REST_API_TOKEN` names some integrations still use — both
+   are supported). Without this, the app still runs, but real Case data won't reliably
+   persist across invocations.
+3. Set `GEMINI_API_KEY` and `GOOGLE_CLIENT_ID` as project environment variables (Settings →
+   Environment Variables). Without `GEMINI_API_KEY`, drafting/parsing silently uses the
+   deterministic offline fallback (never crashes, just less capable).
+4. `APP_URL`/`ALLOWED_ORIGINS` are optional on Vercel: the app's own production domain
+   (`VERCEL_PROJECT_PRODUCTION_URL`) and current deployment domain (`VERCEL_URL`) are
+   always auto-allowed for CORS, since Vercel injects both. Set `APP_URL` explicitly only
+   if you attach a custom domain and want CORS to allow it too.
+5. Add your Vercel domain(s) to the Google OAuth Client's "Authorized JavaScript origins"
+   (see "Google OAuth setup" below) — Gmail Connect won't work from an origin Google
+   doesn't recognize.
 
 ## Environment variables
 

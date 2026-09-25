@@ -7,7 +7,9 @@ import fs from 'fs';
 import path from 'path';
 import { Case } from '../../src/domain/case/types';
 import { createInitialSupplierCase } from '../../src/domain/case/stateTransitions';
+import { selectActiveCase } from '../../src/domain/case/caseSelection';
 import { serverConfig } from '../config';
+import { ICaseRepository } from './ICaseRepository';
 
 export interface CaseRepositoryOptions {
   /**
@@ -16,17 +18,24 @@ export interface CaseRepositoryOptions {
    * tests should use so they never read or write the developer's real
    * .data/cases.json. Omit to use the production default.
    *
-   * NOTE: this is single-process, file-backed persistence. It has no
-   * multi-instance/concurrent-writer safety and is not a durable database —
-   * acceptable for a controlled single-process test, not for production
-   * scale. See README.md "Known limitations".
+   * NOTE: this is single-process, file-backed persistence — the local dev
+   * / test implementation. The Vercel deployment target uses
+   * kvCaseRepository.ts (Redis-backed) instead; see
+   * server/cases/createCaseRepository.ts.
    */
   filePath?: string | null;
   /** Seed a default PO-511 demo case when the repository starts out empty. Default true. */
   autoSeed?: boolean;
 }
 
-export class CaseRepository {
+/**
+ * File-backed (or pure in-memory, for tests) Case persistence. All public
+ * methods are async to conform to ICaseRepository even though the
+ * underlying fs calls are synchronous — this keeps CaseService storage-
+ * agnostic between this and the Redis-backed implementation used in
+ * production on Vercel.
+ */
+export class CaseRepository implements ICaseRepository {
   private cache: Map<string, Case> = new Map();
   private readonly filePath: string | null;
   private readonly autoSeed: boolean;
@@ -102,57 +111,34 @@ export class CaseRepository {
     }
   }
 
-  public getAll(): Case[] {
+  public async getAll(): Promise<Case[]> {
     return Array.from(this.cache.values());
   }
 
-  public getById(id: string): Case | undefined {
+  public async getById(id: string): Promise<Case | undefined> {
     return this.cache.get(id);
   }
 
-  /**
-   * Deterministically selects the "active" Case: the most recently updated
-   * non-terminal (not RESOLVED, not FAILED) Case. Falls back to the most
-   * recently updated Case of any status if every Case is terminal. Ties on
-   * updatedAt break on createdAt, then on id (descending) — never on Map
-   * insertion order, which is not guaranteed to reflect recency.
-   */
-  public getActiveCase(): Case {
-    const all = this.getAll();
-    const nonTerminal = all.filter((c) => c.status !== 'RESOLVED' && c.status !== 'FAILED');
-    const pool = nonTerminal.length > 0 ? nonTerminal : all;
+  public async getActiveCase(): Promise<Case> {
+    const all = await this.getAll();
+    const active = selectActiveCase(all);
+    if (active) return active;
 
-    if (pool.length === 0) {
-      if (!this.autoSeed) {
-        throw new Error('NO_CASES_AVAILABLE');
-      }
-      this.seedDefault();
-      return this.getActiveCase();
+    if (!this.autoSeed) {
+      throw new Error('NO_CASES_AVAILABLE');
     }
-
-    return this.sortByRecency(pool)[0];
+    this.seedDefault();
+    return this.getActiveCase();
   }
 
-  private sortByRecency(cases: Case[]): Case[] {
-    return [...cases].sort((a, b) => {
-      const updatedDelta = Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
-      if (updatedDelta !== 0) return updatedDelta;
-      const createdDelta = Date.parse(b.createdAt) - Date.parse(a.createdAt);
-      if (createdDelta !== 0) return createdDelta;
-      // Final deterministic tie-break: descending id comparison.
-      if (a.id === b.id) return 0;
-      return a.id < b.id ? 1 : -1;
-    });
-  }
-
-  public save(caseObj: Case): Case {
+  public async save(caseObj: Case): Promise<Case> {
     const saved: Case = { ...caseObj, updatedAt: new Date().toISOString() };
     this.cache.set(saved.id, saved);
     this.flushToDisk();
     return saved;
   }
 
-  public delete(id: string): boolean {
+  public async delete(id: string): Promise<boolean> {
     const deleted = this.cache.delete(id);
     if (deleted) {
       this.flushToDisk();
@@ -160,7 +146,7 @@ export class CaseRepository {
     return deleted;
   }
 
-  public reset(): Case {
+  public async reset(): Promise<Case> {
     this.cache.clear();
     const initialCase = createInitialSupplierCase({
       id: 'case-po-511',
