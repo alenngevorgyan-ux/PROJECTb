@@ -55,10 +55,11 @@ export const SupplierDraftModal: React.FC = () => {
     setIsGenerating(true);
     setError(null);
     try {
-      const updatedCase = await ApiClient.prepareDraft(activeCase.id, {
-        recipient,
-        subject,
-      });
+      const updatedCase = await ApiClient.prepareDraft(
+        activeCase.id,
+        { recipient, subject },
+        gmailAuth.accessToken || ''
+      );
       if (updatedCase.draft) {
         setSubject(updatedCase.draft.subject);
         setBody(updatedCase.draft.body);
@@ -99,7 +100,6 @@ export const SupplierDraftModal: React.FC = () => {
           recipient: recipient.trim(),
           subject: subject.trim(),
           body: body.trim(),
-          approvedBy: 'Alex Founder',
         },
         gmailAuth.accessToken
       );

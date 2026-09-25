@@ -36,6 +36,7 @@ export const RealCaseModal: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [securityAck, setSecurityAck] = useState(false);
 
   if (!showRealCaseModal || !activeCase) return null;
 
@@ -52,11 +53,7 @@ export const RealCaseModal: React.FC = () => {
     setIsSyncing(true);
 
     try {
-      const result = await ApiClient.syncReplies(
-        activeCase.id,
-        gmailAuth.email || '',
-        gmailAuth.accessToken
-      );
+      const result = await ApiClient.syncReplies(activeCase.id, gmailAuth.accessToken);
 
       refreshActiveCase();
 
@@ -155,11 +152,15 @@ export const RealCaseModal: React.FC = () => {
   const handleAcceptCredit = async () => {
     try {
       const creditAmt = activeCase.extractedState?.creditOffer?.amount || 400.0;
-      await ApiClient.resolveCase(activeCase.id, {
-        approvedBy: 'Alex Founder',
-        acceptedCredit: creditAmt,
-        notes: 'Founder accepted supplier delay credit via Real Supplier Mode.',
-      });
+      await ApiClient.resolveCase(
+        activeCase.id,
+        {
+          acceptedCredit: creditAmt,
+          notes: 'Founder accepted supplier delay credit via Real Supplier Mode.',
+          securityReviewAcknowledged: activeCase.status === 'SECURITY_REVIEW' ? securityAck : undefined,
+        },
+        gmailAuth.accessToken || ''
+      );
 
       addRealityEvent({
         agentId: 'founder',
@@ -221,6 +222,17 @@ export const RealCaseModal: React.FC = () => {
           )}
 
           {/* Bank Fraud / Security Flag Warning Banner */}
+          {activeCase.needsSenderReview && (
+            <div className="p-3 bg-amber-950/30 border border-amber-700/60 rounded-lg text-amber-200 flex items-start gap-2">
+              <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+              <span className="text-[11px] leading-relaxed">
+                A reply arrived from an address that does not match this Case's known supplier
+                contact. It has been recorded below but was NOT used to update extracted facts.
+                Please review it manually before trusting its content.
+              </span>
+            </div>
+          )}
+
           {hasSecurityRisk && (
             <div className="p-3.5 bg-rose-950/40 border border-rose-600 rounded-lg text-rose-200 space-y-2">
               <div className="flex items-center gap-2 text-rose-300 font-bold">
@@ -235,6 +247,20 @@ export const RealCaseModal: React.FC = () => {
                   <li key={idx}>{flag}</li>
                 ))}
               </ul>
+              {activeCase.status === 'SECURITY_REVIEW' && (
+                <label className="flex items-start gap-2 pt-1 text-[11px] text-rose-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={securityAck}
+                    onChange={(e) => setSecurityAck(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    I have independently verified this financial instruction outside of this email
+                    thread and confirm no automated payment action will occur.
+                  </span>
+                </label>
+              )}
             </div>
           )}
 
@@ -293,7 +319,13 @@ export const RealCaseModal: React.FC = () => {
                     {activeCase.status !== 'RESOLVED' && (
                       <button
                         onClick={handleAcceptCredit}
-                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold transition-colors"
+                        disabled={activeCase.status === 'SECURITY_REVIEW' && !securityAck}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded text-xs font-semibold transition-colors"
+                        title={
+                          activeCase.status === 'SECURITY_REVIEW' && !securityAck
+                            ? 'Acknowledge the security review above first'
+                            : undefined
+                        }
                       >
                         Accept Credit
                       </button>
@@ -319,7 +351,9 @@ export const RealCaseModal: React.FC = () => {
                   <div
                     key={msg.id}
                     className={`p-3.5 rounded-lg border ${
-                      msg.role === 'COUNTERPARTY'
+                      msg.senderVerified === false
+                        ? 'bg-rose-950/20 border-rose-700/50'
+                        : msg.role === 'COUNTERPARTY'
                         ? 'bg-amber-950/20 border-amber-800/40'
                         : 'bg-slate-950/80 border-slate-800'
                     }`}
@@ -328,6 +362,11 @@ export const RealCaseModal: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-white">{msg.authorName}</span>
                         <span className="text-[10px] font-mono text-slate-500">&lt;{msg.email}&gt;</span>
+                        {msg.senderVerified === false && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-rose-950 text-rose-300 border border-rose-800">
+                            UNVERIFIED SENDER
+                          </span>
+                        )}
                       </div>
                       <span className="text-[10px] font-mono text-slate-500">
                         {new Date(msg.timestamp).toLocaleTimeString([], {

@@ -18,15 +18,18 @@ export async function generateSupplierDraft(params: {
   const vendor = params.counterpartyName || 'Acme Manufacturing';
   const contact = params.contactName || 'Fabrication Support';
 
+  const objectiveLine = params.objective
+    ? params.objective
+    : `Check the current status of PO #${po} and obtain a confirmed delivery ETA.`;
+  const contextLine = params.context ? `\n\n${params.context}` : '';
+
   const defaultDraft = {
-    subject: `Inquiry: PO #${po} Customs Hold & Confirmed Delivery ETA`,
+    subject: `PO #${po} — Status & Confirmed ETA Requested`,
     body: `Hi ${contact},
 
-We noticed from freight dispatch tracking that our chassis order (PO #${po}) is currently on hold at customs transit.
+${objectiveLine}${contextLine}
 
-Could you please confirm the current status, the reason for the customs inspection delay, and your revised guaranteed delivery ETA to our assembly facility?
-
-If there is any documentation or clearance authorization required from our procurement side, please let us know immediately so we can expedite release.
+Could you please confirm the current status of this order, the reason for any delay, and a confirmed delivery date?
 
 Best regards,
 Maya
@@ -46,11 +49,13 @@ Details:
 - Purchase Order: PO #${po}
 - Counterparty: ${vendor}
 - Supplier Contact: ${contact} (${params.contactEmail})
-- Objective: ${params.objective || 'Check reason for customs delay and obtain confirmed delivery ETA.'}
-- Context: ${params.context || 'Chassis shipment held at regional customs.'}
+- Objective: ${params.objective || 'Check the current status of this order and obtain a confirmed delivery ETA.'}
+- Context: ${params.context || '(no additional context provided)'}
 
 Rules:
-1. Do not hallucinate missing facts or invent numbers.
+1. Do NOT invent logistics specifics — no customs holds, freight tracking numbers, chassis/parts
+   details, assembly facilities, or causes of delay — unless they literally appear in Details or
+   Context above. If no cause is known, simply ask for one; do not assume or imply a cause.
 2. Ask for the reason for delay and a confirmed delivery ETA.
 3. Keep the tone professional, firm, yet collaborative.
 4. Return ONLY a valid JSON object with the format:

@@ -16,8 +16,8 @@ export class ApiClient {
     return headers;
   }
 
-  public static async getActiveCase(): Promise<Case> {
-    const res = await fetch('/api/cases/active');
+  public static async getActiveCase(accessToken: string): Promise<Case> {
+    const res = await fetch('/api/cases/active', { headers: this.getHeaders(accessToken) });
     const data = await res.json();
     if (!data.success) {
       throw new Error(data.error || 'Failed to fetch active case');
@@ -25,8 +25,8 @@ export class ApiClient {
     return data.case;
   }
 
-  public static async getAllCases(): Promise<Case[]> {
-    const res = await fetch('/api/cases');
+  public static async getAllCases(accessToken: string): Promise<Case[]> {
+    const res = await fetch('/api/cases', { headers: this.getHeaders(accessToken) });
     const data = await res.json();
     if (!data.success) {
       throw new Error(data.error || 'Failed to fetch cases');
@@ -34,15 +34,18 @@ export class ApiClient {
     return data.cases;
   }
 
-  public static async createSupplierCase(params: {
-    poNumber?: string;
-    contactEmail?: string;
-    contactName?: string;
-    objective?: string;
-  }): Promise<Case> {
+  public static async createSupplierCase(
+    params: {
+      poNumber?: string;
+      contactEmail?: string;
+      contactName?: string;
+      objective?: string;
+    },
+    accessToken: string
+  ): Promise<Case> {
     const res = await fetch('/api/cases/create', {
       method: 'POST',
-      headers: this.getHeaders(),
+      headers: this.getHeaders(accessToken),
       body: JSON.stringify(params),
     });
     const data = await res.json();
@@ -54,11 +57,12 @@ export class ApiClient {
 
   public static async prepareDraft(
     caseId: string,
-    draft?: { recipient?: string; subject?: string; body?: string }
+    draft: { recipient?: string; subject?: string; body?: string } | undefined,
+    accessToken: string
   ): Promise<Case> {
     const res = await fetch(`/api/cases/${caseId}/draft`, {
       method: 'POST',
-      headers: this.getHeaders(),
+      headers: this.getHeaders(accessToken),
       body: JSON.stringify(draft || {}),
     });
     const data = await res.json();
@@ -74,7 +78,6 @@ export class ApiClient {
       recipient: string;
       subject: string;
       body: string;
-      approvedBy?: string;
     },
     accessToken: string
   ): Promise<Case> {
@@ -92,13 +95,11 @@ export class ApiClient {
 
   public static async syncReplies(
     caseId: string,
-    userEmail: string,
     accessToken: string
   ): Promise<{ case: Case; newRepliesCount: number }> {
     const res = await fetch(`/api/cases/${caseId}/sync`, {
       method: 'POST',
       headers: this.getHeaders(accessToken),
-      body: JSON.stringify({ userEmail }),
     });
     const data = await res.json();
     if (!data.success) {
@@ -113,14 +114,15 @@ export class ApiClient {
   public static async resolveCase(
     caseId: string,
     params: {
-      approvedBy?: string;
       acceptedCredit?: number;
       notes?: string;
-    }
+      securityReviewAcknowledged?: boolean;
+    },
+    accessToken: string
   ): Promise<Case> {
     const res = await fetch(`/api/cases/${caseId}/resolve`, {
       method: 'POST',
-      headers: this.getHeaders(),
+      headers: this.getHeaders(accessToken),
       body: JSON.stringify(params),
     });
     const data = await res.json();
@@ -130,10 +132,10 @@ export class ApiClient {
     return data.case;
   }
 
-  public static async resetCases(): Promise<Case> {
+  public static async resetCases(accessToken: string): Promise<Case> {
     const res = await fetch('/api/cases/reset', {
       method: 'POST',
-      headers: this.getHeaders(),
+      headers: this.getHeaders(accessToken),
     });
     const data = await res.json();
     if (!data.success) {

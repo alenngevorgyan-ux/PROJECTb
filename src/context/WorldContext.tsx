@@ -163,41 +163,33 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Real Supplier Mode & Gmail State
   const [supplierMode, setSupplierMode] = useState<'DEMO' | 'REAL'>('DEMO');
   const [activeCase, setActiveCase] = useState<Case | null>(null);
+  // Gmail OAuth access token lives in memory ONLY (React state) — never in
+  // localStorage/sessionStorage, never logged. A page refresh intentionally
+  // requires reconnecting Gmail; this is an accepted limitation of this
+  // experimental Real Supplier Mode, not an oversight. See README.md.
   const [gmailAuth, setGmailAuth] = useState<{
     isConnected: boolean;
     email?: string;
     accessToken?: string;
-  }>(() => {
-    try {
-      const saved = sessionStorage.getItem('bw_gmail_auth');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return { isConnected: false };
-  });
+  }>({ isConnected: false });
 
   const connectGmail = useCallback((accessToken: string, email: string) => {
-    const auth = { isConnected: true, email, accessToken };
-    setGmailAuth(auth);
-    try {
-      sessionStorage.setItem('bw_gmail_auth', JSON.stringify(auth));
-    } catch {}
+    setGmailAuth({ isConnected: true, email, accessToken });
   }, []);
 
   const disconnectGmail = useCallback(() => {
     setGmailAuth({ isConnected: false });
-    try {
-      sessionStorage.removeItem('bw_gmail_auth');
-    } catch {}
   }, []);
 
   const refreshActiveCase = useCallback(async () => {
+    if (!gmailAuth.isConnected || !gmailAuth.accessToken) return;
     try {
-      const current = await ApiClient.getActiveCase();
+      const current = await ApiClient.getActiveCase(gmailAuth.accessToken);
       setActiveCase(current);
     } catch (err) {
       console.error('Failed to load active case from server:', err);
     }
-  }, []);
+  }, [gmailAuth.isConnected, gmailAuth.accessToken]);
 
   // Workflows tracking state
   const [activeWorkflows, setActiveWorkflows] = useState<Record<WorkflowType, ActiveWorkflowInfo | undefined>>({
@@ -241,10 +233,14 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => clearAllTimers();
   }, [clearAllTimers]);
 
-  // Load persisted case on startup
+  // Load the active real Case once Gmail is connected. Never called
+  // unauthenticated — the server requires a verified Google identity for
+  // every Case endpoint (see server/auth/requireAuth.ts).
   useEffect(() => {
-    refreshActiveCase();
-  }, [refreshActiveCase]);
+    if (gmailAuth.isConnected) {
+      refreshActiveCase();
+    }
+  }, [gmailAuth.isConnected, refreshActiveCase]);
 
   // Synchronize Maya's world representation with canonical Case state in Real Mode
   useEffect(() => {
@@ -1125,8 +1121,10 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setShowSupplierDraftModal(false);
     setShowRealCaseModal(false);
 
-    // Reset real cases on server
-    ApiClient.resetCases().then((c) => setActiveCase(c)).catch(() => {});
+    // NOTE: intentionally does NOT touch real Case data. Resetting the
+    // visual demo world must never delete or reset the real supplier Case
+    // — that is a separate, explicit, authenticated action
+    // (ApiClient.resetCases) that this function must never call.
 
     const resetEvt = createSimulatedRealityEvent({
       agentId: 'system',
@@ -1451,7 +1449,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             setShowGmailConnectModal(true);
           } else {
             setActiveDialogue(null);
-            ApiClient.prepareDraft(activeCase?.id || 'case-po-511')
+            ApiClient.prepareDraft(activeCase?.id || 'case-po-511', undefined, gmailAuth.accessToken || '')
               .then((c) => {
                 setActiveCase(c);
                 setShowSupplierDraftModal(true);
@@ -1504,7 +1502,7 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           setShowGmailConnectModal(true);
         } else {
           setActiveDialogue(null);
-          ApiClient.prepareDraft(activeCase?.id || 'case-po-511')
+          ApiClient.prepareDraft(activeCase?.id || 'case-po-511', undefined, gmailAuth.accessToken || '')
             .then((c) => {
               setActiveCase(c);
               setShowSupplierDraftModal(true);
@@ -1522,10 +1520,11 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       } else if (actionId === 'MAYA_REAL_ACCEPT_CREDIT') {
         if (activeCase) {
           const creditAmt = activeCase.extractedState?.creditOffer?.amount || 400.0;
-          ApiClient.resolveCase(activeCase.id, {
-            approvedBy: 'Alex Founder',
-            acceptedCredit: creditAmt,
-          })
+          ApiClient.resolveCase(
+            activeCase.id,
+            { acceptedCredit: creditAmt },
+            gmailAuth.accessToken || ''
+          )
             .then((c) => setActiveCase(c))
             .catch(console.error);
 
