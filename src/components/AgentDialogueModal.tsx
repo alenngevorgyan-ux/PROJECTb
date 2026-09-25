@@ -29,10 +29,12 @@ export const AgentDialogueModal: React.FC = () => {
         handleDialogueOption('VITEK_REQ_ONBOARDING');
       }
     } else if (activeDialogue.characterId === 'maya') {
-      if (lower.includes('acme') || lower.includes('shipment') || lower.includes('511')) {
+      if (lower.includes('acme') || lower.includes('shipment') || lower.includes('511') || lower.includes('late') || lower.includes('supplier') || lower.includes('why')) {
         handleDialogueOption('MAYA_ASK_ACME_SHIPMENT');
+      } else if (lower.includes('sync') || lower.includes('reply') || lower.includes('replies')) {
+        handleDialogueOption('MAYA_REAL_SYNC');
       } else if (lower.includes('credit') || lower.includes('accept')) {
-        handleDialogueOption('MAYA_ACCEPT_CREDIT');
+        handleDialogueOption('MAYA_REAL_ACCEPT_CREDIT');
       } else {
         handleDialogueOption('MAYA_ASK_ACME_SHIPMENT');
       }
@@ -62,7 +64,11 @@ export const AgentDialogueModal: React.FC = () => {
       case 'vitek':
         return ['Fix onboarding bug', 'View PR #184'];
       case 'maya':
-        return ['Ask Acme about shipment #511', 'Accept $400 credit'];
+        return [
+          'Maya, ask our supplier why PO #511 is late',
+          'Sync replies from Gmail',
+          'Accept $400 credit',
+        ];
       case 'cloudworks-agent':
         return ['Fix Pro subscription', 'Allow demo access'];
       case 'nova':

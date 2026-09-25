@@ -21,6 +21,8 @@ import {
   WorkflowStartResult,
   SupplierCreditResult,
 } from '../types/world';
+import { Case } from '../domain/case/types';
+import { ApiClient } from '../services/apiClient';
 import {
   INITIAL_CHARACTERS,
   INITIAL_ORGANIZATIONS,
@@ -87,6 +89,27 @@ interface WorldContextType {
   setShowCommandPalette: (show: boolean) => void;
   showFirstRunBanner: boolean;
   setShowFirstRunBanner: (show: boolean) => void;
+  showGmailConnectModal: boolean;
+  setShowGmailConnectModal: (show: boolean) => void;
+  showSupplierDraftModal: boolean;
+  setShowSupplierDraftModal: (show: boolean) => void;
+  showRealCaseModal: boolean;
+  setShowRealCaseModal: (show: boolean) => void;
+
+  // Real Supplier Mode & Gmail State
+  supplierMode: 'DEMO' | 'REAL';
+  setSupplierMode: (mode: 'DEMO' | 'REAL') => void;
+  activeCase: Case | null;
+  refreshActiveCase: () => Promise<void>;
+  gmailAuth: {
+    isConnected: boolean;
+    email?: string;
+    accessToken?: string;
+  };
+  connectGmail: (accessToken: string, email: string) => void;
+  disconnectGmail: () => void;
+  setCharacters: React.Dispatch<React.SetStateAction<Character[]>>;
+  animateAgentWalk: (charId: string, waypoints: { x: number; y: number }[], onComplete?: () => void) => void;
 
   // Workflow tracking
   activeWorkflows: Record<WorkflowType, ActiveWorkflowInfo | undefined>;
@@ -133,6 +156,48 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [showIdentityModal, setShowIdentityModal] = useState<boolean>(false);
   const [showCommandPalette, setShowCommandPalette] = useState<boolean>(false);
   const [showFirstRunBanner, setShowFirstRunBanner] = useState<boolean>(true);
+  const [showGmailConnectModal, setShowGmailConnectModal] = useState<boolean>(false);
+  const [showSupplierDraftModal, setShowSupplierDraftModal] = useState<boolean>(false);
+  const [showRealCaseModal, setShowRealCaseModal] = useState<boolean>(false);
+
+  // Real Supplier Mode & Gmail State
+  const [supplierMode, setSupplierMode] = useState<'DEMO' | 'REAL'>('DEMO');
+  const [activeCase, setActiveCase] = useState<Case | null>(null);
+  const [gmailAuth, setGmailAuth] = useState<{
+    isConnected: boolean;
+    email?: string;
+    accessToken?: string;
+  }>(() => {
+    try {
+      const saved = sessionStorage.getItem('bw_gmail_auth');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return { isConnected: false };
+  });
+
+  const connectGmail = useCallback((accessToken: string, email: string) => {
+    const auth = { isConnected: true, email, accessToken };
+    setGmailAuth(auth);
+    try {
+      sessionStorage.setItem('bw_gmail_auth', JSON.stringify(auth));
+    } catch {}
+  }, []);
+
+  const disconnectGmail = useCallback(() => {
+    setGmailAuth({ isConnected: false });
+    try {
+      sessionStorage.removeItem('bw_gmail_auth');
+    } catch {}
+  }, []);
+
+  const refreshActiveCase = useCallback(async () => {
+    try {
+      const current = await ApiClient.getActiveCase();
+      setActiveCase(current);
+    } catch (err) {
+      console.error('Failed to load active case from server:', err);
+    }
+  }, []);
 
   // Workflows tracking state
   const [activeWorkflows, setActiveWorkflows] = useState<Record<WorkflowType, ActiveWorkflowInfo | undefined>>({
@@ -175,6 +240,46 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     return () => clearAllTimers();
   }, [clearAllTimers]);
+
+  // Load persisted case on startup
+  useEffect(() => {
+    refreshActiveCase();
+  }, [refreshActiveCase]);
+
+  // Synchronize Maya's world representation with canonical Case state in Real Mode
+  useEffect(() => {
+    if (supplierMode === 'REAL' && activeCase) {
+      if (activeCase.status === 'SENT' || activeCase.status === 'WAITING_REPLY') {
+        setCharacters((prev) =>
+          prev.map((c) =>
+            c.id === 'maya'
+              ? {
+                  ...c,
+                  x: 5,
+                  y: 5,
+                  status: 'WAITING FOR APPROVAL',
+                  statusText: 'WAITING ON ACME (Real Gmail Rail)',
+                }
+              : c
+          )
+        );
+      } else if (activeCase.status === 'NEEDS_DECISION') {
+        setCharacters((prev) =>
+          prev.map((c) =>
+            c.id === 'maya'
+              ? {
+                  ...c,
+                  x: 4,
+                  y: 3,
+                  status: 'TALKING',
+                  statusText: 'Supplier reply received via Gmail',
+                }
+              : c
+          )
+        );
+      }
+    }
+  }, [supplierMode, activeCase?.status]);
 
   // Sound sync
   useEffect(() => {
@@ -1017,6 +1122,11 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setShowTreasuryModal(false);
     setShowIdentityModal(false);
     setShowCommandPalette(false);
+    setShowSupplierDraftModal(false);
+    setShowRealCaseModal(false);
+
+    // Reset real cases on server
+    ApiClient.resetCases().then((c) => setActiveCase(c)).catch(() => {});
 
     const resetEvt = createSimulatedRealityEvent({
       agentId: 'system',
@@ -1064,29 +1174,106 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           ],
         });
       } else if (charId === 'maya') {
-        setActiveDialogue({
-          characterId: 'maya',
-          stage: 'MAYA_INITIAL',
-          speaker: 'Maya',
-          speakerRole: 'AI Procurement Lead',
-          avatarColor: '#10b981',
-          message: 'Hi Alex. Tracking vendor pipelines and customs shipments. What can I do for you?',
-          options: [
-            {
-              label: 'Maya, go ask Acme why shipment #511 is late.',
-              actionId: 'MAYA_ASK_ACME_SHIPMENT',
-              primary: true,
-            },
-            {
-              label: 'Review pending invoices and treasury spending limits.',
-              actionId: 'MAYA_REVIEW_INVOICES',
-            },
-            {
-              label: 'Check inventory reserves for aluminum chassis.',
-              actionId: 'MAYA_INVENTORY_CHECK',
-            },
-          ],
-        });
+        if (supplierMode === 'REAL') {
+          const caseStatus = activeCase?.status || 'DRAFT_READY';
+          if (caseStatus === 'WAITING_REPLY') {
+            setActiveDialogue({
+              characterId: 'maya',
+              stage: 'MAYA_REAL_WAITING',
+              speaker: 'Maya',
+              speakerRole: 'AI Procurement Lead',
+              avatarColor: '#10b981',
+              message: `Hi Alex. Outbound supplier inquiry for PO #${activeCase?.poNumber || '511'} is in flight via Gmail.\n\nTarget recipient: ${activeCase?.contact.email || 'supplier'}\nStatus: WAITING ON ACME\n\nWould you like to query the Gmail thread for new responses?`,
+              options: [
+                { label: 'SYNC REPLIES FROM GMAIL', actionId: 'MAYA_REAL_SYNC', primary: true },
+                { label: 'VIEW CASE & GMAIL THREAD', actionId: 'MAYA_VIEW_REAL_CASE' },
+                { label: 'SWITCH TO DEMO MODE (Simulated)', actionId: 'SWITCH_TO_DEMO_MODE' },
+              ],
+            });
+          } else if (caseStatus === 'NEEDS_DECISION') {
+            const reason = activeCase?.extractedState?.delayReason || 'Customs hold';
+            const eta = activeCase?.extractedState?.confirmedEta || 'Friday';
+            const credit = activeCase?.extractedState?.creditOffer?.amount;
+            setActiveDialogue({
+              characterId: 'maya',
+              stage: 'MAYA_REAL_DECISION',
+              speaker: 'Maya',
+              speakerRole: 'AI Procurement Lead',
+              avatarColor: '#10b981',
+              message: `Acme replied via Gmail!\n\nReason: ${reason}\nNew ETA: ${eta}${credit ? `\nOffered Credit: $${credit.toFixed(2)}` : ''}\n\nWhat would you like to do?`,
+              options: [
+                ...(credit
+                  ? [
+                      {
+                        label: `ACCEPT $${credit.toFixed(2)} CREDIT`,
+                        actionId: 'MAYA_REAL_ACCEPT_CREDIT',
+                        primary: true,
+                        variant: 'success' as const,
+                      },
+                    ]
+                  : []),
+                { label: 'VIEW FULL GMAIL CASE & THREAD', actionId: 'MAYA_VIEW_REAL_CASE' },
+                { label: 'SWITCH TO DEMO MODE', actionId: 'SWITCH_TO_DEMO_MODE' },
+              ],
+            });
+          } else if (caseStatus === 'RESOLVED') {
+            setActiveDialogue({
+              characterId: 'maya',
+              stage: 'MAYA_REAL_RESOLVED',
+              speaker: 'Maya',
+              speakerRole: 'AI Procurement Lead',
+              avatarColor: '#10b981',
+              message: `Case for PO #${activeCase?.poNumber || '511'} is resolved and confirmed. All credit terms were applied.`,
+              options: [
+                { label: 'PREPARE NEW SUPPLIER INQUIRY', actionId: 'MAYA_REAL_PREPARE_DRAFT', primary: true },
+                { label: 'VIEW RESOLVED CASE', actionId: 'MAYA_VIEW_REAL_CASE' },
+                { label: 'SWITCH TO DEMO MODE', actionId: 'SWITCH_TO_DEMO_MODE' },
+              ],
+            });
+          } else {
+            setActiveDialogue({
+              characterId: 'maya',
+              stage: 'MAYA_REAL_INITIAL',
+              speaker: 'Maya',
+              speakerRole: 'AI Procurement Lead',
+              avatarColor: '#10b981',
+              message: `Hi Alex. Real Supplier Mode is active. I can prepare an actual supplier inquiry to Acme Manufacturing via your connected Gmail.`,
+              options: [
+                { label: 'Prepare supplier inquiry for PO #511', actionId: 'MAYA_REAL_PREPARE_DRAFT', primary: true },
+                { label: 'Review Case Details', actionId: 'MAYA_VIEW_REAL_CASE' },
+                { label: 'Switch to Demo Mode (Simulated vision)', actionId: 'SWITCH_TO_DEMO_MODE' },
+              ],
+            });
+          }
+        } else {
+          setActiveDialogue({
+            characterId: 'maya',
+            stage: 'MAYA_INITIAL',
+            speaker: 'Maya',
+            speakerRole: 'AI Procurement Lead',
+            avatarColor: '#10b981',
+            message: 'Hi Alex. Tracking vendor pipelines and customs shipments. What can I do for you?',
+            options: [
+              {
+                label: 'Maya, go ask Acme why shipment #511 is late.',
+                actionId: 'MAYA_ASK_ACME_SHIPMENT',
+                primary: true,
+              },
+              {
+                label: 'Switch to REAL SUPPLIER MODE (Gmail + Gemini)',
+                actionId: 'SWITCH_TO_REAL_MODE',
+              },
+              {
+                label: 'Review pending invoices and treasury spending limits.',
+                actionId: 'MAYA_REVIEW_INVOICES',
+              },
+              {
+                label: 'Check inventory reserves for aluminum chassis.',
+                actionId: 'MAYA_INVENTORY_CHECK',
+              },
+            ],
+          });
+        }
       } else if (charId === 'alex-designer') {
         setActiveDialogue({
           characterId: 'alex-designer',
@@ -1244,12 +1431,128 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           avatarColor: '#10b981',
           message: 'Should I contact our normal supplier contact at Acme Manufacturing?',
           options: [
-            { label: 'Yes.', actionId: 'MAYA_CONFIRM_SUPPLIER_CONTACT', primary: true },
+            {
+              label: supplierMode === 'REAL'
+                ? 'Yes (Prepare real inquiry via Gmail).'
+                : 'Yes.',
+              actionId: 'MAYA_CONFIRM_SUPPLIER_CONTACT',
+              primary: true,
+            },
+            ...(supplierMode === 'DEMO'
+              ? [{ label: 'Switch to REAL SUPPLIER MODE (Gmail + Gemini)', actionId: 'SWITCH_TO_REAL_MODE' }]
+              : [{ label: 'Switch to DEMO MODE (Simulated)', actionId: 'SWITCH_TO_DEMO_MODE' }]),
             { label: 'Check logistics records first.', actionId: 'MAYA_CHECK_RECORDS' },
           ],
         });
       } else if (actionId === 'MAYA_CONFIRM_SUPPLIER_CONTACT') {
-        startMayaAcmeWorkflow();
+        if (supplierMode === 'REAL') {
+          if (!gmailAuth.isConnected) {
+            setActiveDialogue(null);
+            setShowGmailConnectModal(true);
+          } else {
+            setActiveDialogue(null);
+            ApiClient.prepareDraft(activeCase?.id || 'case-po-511')
+              .then((c) => {
+                setActiveCase(c);
+                setShowSupplierDraftModal(true);
+              })
+              .catch((err) => {
+                console.error(err);
+                setShowSupplierDraftModal(true);
+              });
+          }
+        } else {
+          startMayaAcmeWorkflow();
+        }
+      } else if (actionId === 'SWITCH_TO_REAL_MODE') {
+        setSupplierMode('REAL');
+        if (!gmailAuth.isConnected) {
+          setActiveDialogue(null);
+          setShowGmailConnectModal(true);
+        } else {
+          setActiveDialogue({
+            characterId: 'maya',
+            stage: 'MAYA_REAL_INITIAL',
+            speaker: 'Maya',
+            speakerRole: 'AI Procurement Lead',
+            avatarColor: '#10b981',
+            message: `Switched to Real Supplier Mode! Connected as ${gmailAuth.email}. Would you like me to prepare an inquiry for PO #511?`,
+            options: [
+              { label: 'Prepare supplier inquiry for PO #511', actionId: 'MAYA_REAL_PREPARE_DRAFT', primary: true },
+              { label: 'Review Case Details', actionId: 'MAYA_VIEW_REAL_CASE' },
+              { label: 'Dismiss', actionId: 'DISMISS_DIALOGUE' },
+            ],
+          });
+        }
+      } else if (actionId === 'SWITCH_TO_DEMO_MODE') {
+        setSupplierMode('DEMO');
+        setActiveDialogue({
+          characterId: 'maya',
+          stage: 'MAYA_INITIAL',
+          speaker: 'Maya',
+          speakerRole: 'AI Procurement Lead',
+          avatarColor: '#10b981',
+          message: 'Switched back to Demo Simulation mode.',
+          options: [
+            { label: 'Run vision demo simulation', actionId: 'MAYA_ASK_ACME_SHIPMENT', primary: true },
+            { label: 'Dismiss', actionId: 'DISMISS_DIALOGUE' },
+          ],
+        });
+      } else if (actionId === 'MAYA_REAL_PREPARE_DRAFT') {
+        if (!gmailAuth.isConnected) {
+          setActiveDialogue(null);
+          setShowGmailConnectModal(true);
+        } else {
+          setActiveDialogue(null);
+          ApiClient.prepareDraft(activeCase?.id || 'case-po-511')
+            .then((c) => {
+              setActiveCase(c);
+              setShowSupplierDraftModal(true);
+            })
+            .catch(() => {
+              setShowSupplierDraftModal(true);
+            });
+        }
+      } else if (actionId === 'MAYA_REAL_SYNC') {
+        setActiveDialogue(null);
+        setShowRealCaseModal(true);
+      } else if (actionId === 'MAYA_VIEW_REAL_CASE') {
+        setActiveDialogue(null);
+        setShowRealCaseModal(true);
+      } else if (actionId === 'MAYA_REAL_ACCEPT_CREDIT') {
+        if (activeCase) {
+          const creditAmt = activeCase.extractedState?.creditOffer?.amount || 400.0;
+          ApiClient.resolveCase(activeCase.id, {
+            approvedBy: 'Alex Founder',
+            acceptedCredit: creditAmt,
+          })
+            .then((c) => setActiveCase(c))
+            .catch(console.error);
+
+          acceptSupplierCredit('inv-511', creditAmt);
+
+          addRealityEvent({
+            agentId: 'founder',
+            agentName: 'Alex Founder',
+            worldAction: `Founder accepted $${creditAmt.toFixed(2)} supplier credit from Acme reply`,
+            businessEvent: `Applied $${creditAmt.toFixed(2)} credit to Invoice #511. Real Case resolved.`,
+            category: 'FINANCE',
+            isReal: true,
+          });
+
+          setActiveDialogue({
+            characterId: 'maya',
+            stage: 'MAYA_CREDIT_ACCEPTED',
+            speaker: 'Maya',
+            speakerRole: 'AI Procurement Lead',
+            avatarColor: '#10b981',
+            message: `Real credit accepted and applied to Invoice #511. Revised total: $418.00.\n\nReady for Treasury authorization in Finance.`,
+            options: [
+              { label: 'OPEN TREASURY & PAY $418', actionId: 'OPEN_TREASURY_MODAL', primary: true },
+              { label: 'DISMISS', actionId: 'DISMISS_DIALOGUE' },
+            ],
+          });
+        }
       } else if (actionId === 'VIEW_EMAIL_THREAD') {
         setActiveDialogue(null);
         setShowEmailThreadModal(true);
@@ -1453,6 +1756,21 @@ export const WorldProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setShowCommandPalette,
         showFirstRunBanner,
         setShowFirstRunBanner,
+        showGmailConnectModal,
+        setShowGmailConnectModal,
+        showSupplierDraftModal,
+        setShowSupplierDraftModal,
+        showRealCaseModal,
+        setShowRealCaseModal,
+        supplierMode,
+        setSupplierMode,
+        activeCase,
+        refreshActiveCase,
+        gmailAuth,
+        connectGmail,
+        disconnectGmail,
+        setCharacters,
+        animateAgentWalk,
         activeWorkflows,
         isWorkflowRunning,
         callVitek,

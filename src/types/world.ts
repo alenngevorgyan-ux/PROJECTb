@@ -124,6 +124,8 @@ export interface RealityEvent {
   businessEvent: string;
   category: 'DEV' | 'SUPPLY' | 'DESIGN' | 'FINANCE' | 'SUPPORT' | 'GENERAL';
   relatedEntityId?: string;
+  isReal?: boolean;
+  rail?: string;
 }
 
 export interface PullRequest {

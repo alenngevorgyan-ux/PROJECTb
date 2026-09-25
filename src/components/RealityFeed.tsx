@@ -68,12 +68,27 @@ export const RealityFeed: React.FC<RealityFeedProps> = ({ isOpen, onClose }) => 
           >
             {/* World Action */}
             <div className="flex items-start gap-2">
-              <span className="w-2 h-2 rounded-full bg-sky-400 mt-1.5 shrink-0" />
+              <span
+                className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
+                  evt.isReal ? 'bg-emerald-400 ring-2 ring-emerald-400/30 animate-pulse' : 'bg-sky-400'
+                }`}
+              />
               <div className="flex-1">
-                <div className="text-[10px] font-mono text-sky-400 uppercase tracking-wider">
-                  WORLD ACTION · {evt.timestamp}
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] font-mono text-sky-400 uppercase tracking-wider">
+                    WORLD ACTION · {evt.timestamp}
+                  </div>
+                  {evt.isReal ? (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/80 shadow-sm">
+                      REAL ACTION
+                    </span>
+                  ) : (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-mono text-slate-400 bg-slate-900 border border-slate-800">
+                      SIMULATED
+                    </span>
+                  )}
                 </div>
-                <div className="text-xs font-semibold text-white leading-snug">
+                <div className="text-xs font-semibold text-white leading-snug mt-0.5">
                   {evt.worldAction}
                 </div>
               </div>

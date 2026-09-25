@@ -18,6 +18,8 @@ import {
   ArrowRight,
   ShieldCheck,
   AlertCircle,
+  Mail,
+  FileText,
 } from 'lucide-react';
 
 interface TopBarProps {
@@ -45,6 +47,12 @@ export const TopBar: React.FC<TopBarProps> = ({
     callVitek,
     teleportToOrganization,
     identity,
+    supplierMode,
+    setSupplierMode,
+    gmailAuth,
+    setShowGmailConnectModal,
+    setShowRealCaseModal,
+    activeCase,
   } = useWorld();
 
   return (
@@ -124,7 +132,62 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       {/* Zone 3: Actions, Search, Customer Mode & Identity */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2">
+        {/* Real Supplier Mode / Demo Mode Switcher */}
+        <button
+          onClick={() => {
+            if (supplierMode === 'DEMO') {
+              setSupplierMode('REAL');
+              if (!gmailAuth.isConnected) {
+                setShowGmailConnectModal(true);
+              }
+            } else {
+              setSupplierMode('DEMO');
+            }
+          }}
+          className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md border transition-all ${
+            supplierMode === 'REAL'
+              ? 'bg-emerald-950/80 text-emerald-300 border-emerald-600 shadow-sm'
+              : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200'
+          }`}
+          title="Toggle between Vision Demo and Real Supplier Mode"
+        >
+          <span
+            className={`w-2 h-2 rounded-full ${
+              supplierMode === 'REAL' ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
+            }`}
+          />
+          <span className="hidden sm:inline font-mono">{supplierMode === 'REAL' ? 'REAL SUPPLIER' : 'DEMO MODE'}</span>
+        </button>
+
+        {/* Gmail Connection Indicator */}
+        <button
+          onClick={() => setShowGmailConnectModal(true)}
+          className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded-md border transition-all ${
+            gmailAuth.isConnected
+              ? 'bg-slate-900 border-emerald-800/60 text-emerald-400 hover:bg-slate-800'
+              : 'bg-red-950/40 border-red-800/60 text-red-300 hover:bg-red-900/40'
+          }`}
+          title="Gmail Workspace Status"
+        >
+          <Mail className="w-3.5 h-3.5" />
+          <span className="hidden md:inline font-mono text-[11px]">
+            {gmailAuth.isConnected ? gmailAuth.email?.split('@')[0] : 'Connect Gmail'}
+          </span>
+        </button>
+
+        {/* Active Real Case Button (if in Real Mode) */}
+        {supplierMode === 'REAL' && activeCase && (
+          <button
+            onClick={() => setShowRealCaseModal(true)}
+            className="flex items-center gap-1.5 px-2 py-1 text-xs bg-sky-950/80 hover:bg-sky-900/80 border border-sky-700/70 text-sky-300 rounded-md font-medium transition-all"
+            title="View Active Real Supplier Case"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span className="hidden lg:inline">Case #{activeCase.poNumber || '511'}</span>
+          </button>
+        )}
+
         {/* Customer Mode Toggle (Specifically requested in prompt!) */}
         <button
           onClick={() => {

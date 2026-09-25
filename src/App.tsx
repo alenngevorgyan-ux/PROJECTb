@@ -17,6 +17,9 @@ import { DesignReviewModal } from './components/DesignReviewModal';
 import { IdentityModal } from './components/IdentityModal';
 import { CommandPalette } from './components/CommandPalette';
 import { FirstRunBanner } from './components/FirstRunBanner';
+import { GmailConnectModal } from './components/GmailConnectModal';
+import { SupplierDraftModal } from './components/SupplierDraftModal';
+import { RealCaseModal } from './components/RealCaseModal';
 
 function WorldContent() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -61,6 +64,9 @@ function WorldContent() {
       <DesignReviewModal />
       <IdentityModal />
       <CommandPalette />
+      <GmailConnectModal />
+      <SupplierDraftModal />
+      <RealCaseModal />
     </div>
   );
 }
